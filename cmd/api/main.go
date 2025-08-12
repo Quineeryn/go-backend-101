@@ -1,36 +1,62 @@
 package main
 
 import (
-	"encoding/json"
+	"context"
+	"log/slog"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+
+	"github.com/Quineeryn/go-backend-101/internal/config"
+	"github.com/Quineeryn/go-backend-101/internal/httpx"
+	"github.com/Quineeryn/go-backend-101/internal/users"
 )
 
-type JSON = map[string]any
-
 func main() {
+	cfg := config.FromEnv()
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(logger)
+
 	r := chi.NewRouter()
-	r.Use(middleware.RequestID)
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
+	r.Use(middleware.RequestID, middleware.Recoverer, middleware.Logger)
 	r.Use(middleware.Timeout(60 * time.Second))
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, JSON{"status": "ok"})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 	})
 
-	r.Get("/hello", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, JSON{"message": "Hello, Backend!"})
+	store := users.NewStore()
+	r.Route("/v1", func(v chi.Router) {
+		v.Mount("/users", users.NewRouter(store))
 	})
 
-	http.ListenAndServe(":8080", r)
-}
+	addr := ":" + cfg.Port
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           r,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 
-func writeJSON(w http.ResponseWriter, code int, data any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(data)
+	go func() {
+		logger.Info("server.starting", "addr", addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("server.error", "err", err)
+		}
+	}()
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	<-stop
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = srv.Shutdown(ctx)
 }
