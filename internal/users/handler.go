@@ -1,14 +1,16 @@
 package users
 
 import (
-	"encoding/json"
 	"net/http"
+	"regexp"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/Quineeryn/go-backend-101/internal/httpx"
 )
+
+var emailRx = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 
 func NewRouter(store *Store) chi.Router {
 	r := chi.NewRouter()
@@ -24,12 +26,13 @@ func NewRouter(store *Store) chi.Router {
 
 	r.Post("/", func(w http.ResponseWriter, r *http.Request) {
 		var req CreateUserRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err := httpx.DecodeJSON(r, &req); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "invalid json", err.Error())
 			return
 		}
-		if req.Name == "" || req.Email == "" {
-			httpx.WriteError(w, http.StatusBadRequest, "name and email are required", nil)
+		req.Normalize()
+		if req.Name == "" || req.Email == "" || !emailRx.MatchString(req.Email) {
+			httpx.WriteError(w, http.StatusBadRequest, "invalid name or email", nil)
 			return
 		}
 		u := User{ID: uuid.NewString(), Name: req.Name, Email: req.Email}
@@ -49,12 +52,13 @@ func NewRouter(store *Store) chi.Router {
 	r.Put("/{id}", func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
 		var req UpdateUserRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err := httpx.DecodeJSON(r, &req); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "invalid json", err.Error())
 			return
 		}
-		if req.Name == "" || req.Email == "" {
-			httpx.WriteError(w, http.StatusBadRequest, "name and email are required", nil)
+		req.Normalize()
+		if req.Name == "" || req.Email == "" || !emailRx.MatchString(req.Email) {
+			httpx.WriteError(w, http.StatusBadRequest, "invalid name or email", nil)
 			return
 		}
 		upd, err := store.Update(id, User{Name: req.Name, Email: req.Email})

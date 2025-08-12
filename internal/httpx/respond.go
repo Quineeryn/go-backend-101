@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 )
@@ -22,4 +23,13 @@ func WriteError(w http.ResponseWriter, code int, msg string, details any) {
 		"time":    time.Now().UTC().Format(time.RFC3339),
 		"details": details,
 	})
+}
+
+func DecodeJSON(r *http.Request, dst any) error {
+	if r.Header.Get("Content-Type") != "application/json" {
+		return errors.New("content type must be application/json")
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	return dec.Decode(dst)
 }
