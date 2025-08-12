@@ -1,0 +1,1 @@
+/bin/\n/dist/\n/vendor/\n*.out\n*.test\n.DS_Store\n.env
