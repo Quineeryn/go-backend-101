@@ -16,3 +16,13 @@ vet:
 
 tidy:
 	go mod tidy
+
+
+MIGRATE?=migrate
+DB_URL?=postgres://postgres:postgres@127.0.0.1:5432/go_backend_101?sslmode=disable
+
+migrate-up:
+	$(MIGRATE) -path db/migrations -database "$(DB_URL)" up
+
+migrate-down:
+	$(MIGRATE) -path db/migrations -database "$(DB_URL)" down 1

@@ -21,7 +21,6 @@ import (
 func main() {
 	cfg := config.FromEnv()
 	db := config.OpenDB(cfg.DBDSN)
-	users.AutoMigrate(db)
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 
