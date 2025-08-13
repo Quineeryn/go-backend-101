@@ -7,13 +7,15 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/go-chi/chi/v5"
-
+	"github.com/Quineeryn/go-backend-101/internal/config"
 	"github.com/Quineeryn/go-backend-101/internal/users"
+	"github.com/go-chi/chi/v5"
 )
 
 func newRouter() *chi.Mux {
-	store := users.NewStore()
+	cfg := config.FromEnv()
+	db := config.OpenDB(cfg.DBDSN)
+	store := users.NewStore(db)
 	r := chi.NewRouter()
 	r.Mount("/v1/users", users.NewRouter(store))
 	return r
