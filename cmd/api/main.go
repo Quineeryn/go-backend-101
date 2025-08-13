@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/Quineeryn/go-backend-101/internal/config"
+	"github.com/Quineeryn/go-backend-101/internal/docs" // for docs generation
 	"github.com/Quineeryn/go-backend-101/internal/httpx"
 	"github.com/Quineeryn/go-backend-101/internal/users"
 )
@@ -34,6 +35,9 @@ func main() {
 	r.Route("/v1", func(v chi.Router) {
 		v.Mount("/users", users.NewRouter(store))
 	})
+
+	r.Get("/openapi.yaml", docs.OpenAPISpec)
+	r.Get("/docs", docs.Redoc)
 
 	addr := ":" + cfg.Port
 	srv := &http.Server{

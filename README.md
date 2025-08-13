@@ -73,3 +73,6 @@ Bash
 
 curl -s http://localhost:8080/v1/users
 
+## API Docs
+- Redoc UI: http://localhost:8080/docs
+- Raw OpenAPI: http://localhost:8080/openapi.yaml
