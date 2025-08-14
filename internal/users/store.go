@@ -2,6 +2,7 @@ package users
 
 import (
 	"errors"
+	"strings"
 
 	"gorm.io/gorm"
 )
@@ -15,14 +16,24 @@ type Store struct {
 	db *gorm.DB
 }
 
-func NewStore(db *gorm.DB) *Store {
-	return &Store{db: db}
+func NewStore(db *gorm.DB) *Store { return &Store{db: db} }
+
+// isDuplicateErr tries to normalize unique-violation across drivers:
+// - gorm.ErrDuplicatedKey (when driver supports it)
+// - SQLite (glebarez/modernc): "UNIQUE constraint failed"
+// - Postgres (lib/pq / pgx): "duplicate key value violates unique constraint"
+func isDuplicateErr(err error) bool {
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unique constraint failed") ||
+		strings.Contains(msg, "duplicate key value violates unique constraint")
 }
 
 func (s *Store) Create(u User) (User, error) {
 	if err := s.db.Create(&u).Error; err != nil {
-		// gorm akan memetakan unique violation ke gorm.ErrDuplicatedKey (pg/sqlite)
-		if errors.Is(err, gorm.ErrDuplicatedKey) {
+		if isDuplicateErr(err) {
 			return User{}, ErrDuplicate
 		}
 		return User{}, err
@@ -55,10 +66,12 @@ func (s *Store) Update(id string, data User) (User, error) {
 		}
 		return User{}, err
 	}
+
 	u.Name = data.Name
 	u.Email = data.Email
+
 	if err := s.db.Save(&u).Error; err != nil {
-		if errors.Is(err, gorm.ErrDuplicatedKey) {
+		if isDuplicateErr(err) {
 			return User{}, ErrDuplicate
 		}
 		return User{}, err

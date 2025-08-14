@@ -7,22 +7,23 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/Quineeryn/go-backend-101/internal/config"
-	"github.com/Quineeryn/go-backend-101/internal/users"
 	"github.com/go-chi/chi/v5"
+
+	"github.com/Quineeryn/go-backend-101/internal/testdb"
+	"github.com/Quineeryn/go-backend-101/internal/users"
 )
 
-func newRouter() *chi.Mux {
-	cfg := config.FromEnv()
-	db := config.OpenDB(cfg.DBDSN)
-	store := users.NewStore(db)
+func newRouter(t *testing.T) *chi.Mux {
+	db := testdb.Open(t)
+	users.AutoMigrate(db)       // buat table + unique index untuk SQLite
+	store := users.NewStore(db) // store pakai GORM (SQLite)
 	r := chi.NewRouter()
 	r.Mount("/v1/users", users.NewRouter(store))
 	return r
 }
 
 func TestCreateAndList(t *testing.T) {
-	r := newRouter()
+	r := newRouter(t)
 
 	// create
 	body := []byte(`{"name":"Alea","email":"alea@example.com"}`)
@@ -51,7 +52,7 @@ func TestCreateAndList(t *testing.T) {
 }
 
 func TestCreate_DuplicateEmail(t *testing.T) {
-	r := newRouter()
+	r := newRouter(t)
 
 	// create pertama
 	body := []byte(`{"name":"Alea","email":"alea@example.com"}`)
@@ -63,7 +64,7 @@ func TestCreate_DuplicateEmail(t *testing.T) {
 		t.Fatalf("want 201, got %d", rec.Code)
 	}
 
-	// create kedua dengan email sama -> 409
+	// create kedua (email sama) → 409
 	req2 := httptest.NewRequest(http.MethodPost, "/v1/users", bytes.NewReader(body))
 	req2.Header.Set("Content-Type", "application/json")
 	rec2 := httptest.NewRecorder()
