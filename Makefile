@@ -19,7 +19,7 @@ tidy:
 
 
 MIGRATE?=migrate
-DB_URL?=postgres://postgres:postgres@127.0.0.1:5432/go_backend_101?sslmode=disable
+DB_URL?=postgres://postgres:canandra10@127.0.0.1:5432/go_backend_101?sslmode=disable
 
 migrate-up:
 	$(MIGRATE) -path db/migrations -database "$(DB_URL)" up
