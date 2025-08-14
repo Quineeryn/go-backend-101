@@ -9,36 +9,44 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
+	"github.com/gin-gonic/gin"
 
 	"github.com/Quineeryn/go-backend-101/internal/config"
-	"github.com/Quineeryn/go-backend-101/internal/docs" // for docs generation
-	"github.com/Quineeryn/go-backend-101/internal/httpx"
+	"github.com/Quineeryn/go-backend-101/internal/docs"
 	"github.com/Quineeryn/go-backend-101/internal/users"
 )
 
 func main() {
 	cfg := config.FromEnv()
 	db := config.OpenDB(cfg.DBDSN)
+
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 
-	r := chi.NewRouter()
-	r.Use(middleware.RequestID, middleware.Recoverer, middleware.Logger)
-	r.Use(middleware.Timeout(60 * time.Second))
+	// Migrate schema sebelum start server
+	if err := users.AutoMigrate(db); err != nil {
+		slog.Error("migrate.failed", "err", err)
+		os.Exit(1)
+	}
 
-	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+	// ==== Gin router ====
+	r := gin.New()
+	r.Use(gin.Logger())
+	r.Use(gin.Recovery())
+	r.Use(timeoutMiddleware(60 * time.Second)) // hard timeout per request (opsional)
+
+	// Healthcheck
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
+	// Users
 	store := users.NewStore(db)
-	r.Route("/v1", func(v chi.Router) {
-		v.Mount("/users", users.NewRouter(store))
-	})
+	users.RegisterRoutes(r, users.NewHandler(store)) // akan mendaftarkan /v1/users (tanpa trailing slash)
 
-	r.Get("/openapi.yaml", docs.OpenAPISpec)
-	r.Get("/docs", docs.Redoc)
+	// Docs (handler kamu kemungkinan http.HandlerFunc → bungkus pakai WrapF)
+	r.GET("/openapi.yaml", gin.WrapF(docs.OpenAPISpec))
+	r.GET("/docs", gin.WrapF(docs.Redoc))
 
 	addr := ":" + cfg.Port
 	srv := &http.Server{
@@ -50,6 +58,7 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
+	// Start async
 	go func() {
 		logger.Info("server.starting", "addr", addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -57,6 +66,7 @@ func main() {
 		}
 	}()
 
+	// Graceful shutdown
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
@@ -64,4 +74,15 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(ctx)
+	logger.Info("server.stopped")
+}
+
+// timeoutMiddleware: menambahkan context timeout ke setiap request.
+func timeoutMiddleware(d time.Duration) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), d)
+		defer cancel()
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	}
 }

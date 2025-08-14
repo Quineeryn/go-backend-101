@@ -7,18 +7,26 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/gin-gonic/gin"
 
 	"github.com/Quineeryn/go-backend-101/internal/testdb"
 	"github.com/Quineeryn/go-backend-101/internal/users"
 )
 
-func newRouter(t *testing.T) *chi.Mux {
+func newRouter(t *testing.T) *gin.Engine {
+	t.Helper()
+
 	db := testdb.Open(t)
-	users.AutoMigrate(db)       // buat table + unique index untuk SQLite
-	store := users.NewStore(db) // store pakai GORM (SQLite)
-	r := chi.NewRouter()
-	r.Mount("/v1/users", users.NewRouter(store))
+	if err := users.AutoMigrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	store := users.NewStore(db)
+	h := users.NewHandler(store)
+
+	r := gin.New()
+	r.Use(gin.Recovery())
+	users.RegisterRoutes(r, h)
 	return r
 }
 
