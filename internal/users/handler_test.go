@@ -49,3 +49,26 @@ func TestCreateAndList(t *testing.T) {
 		t.Fatalf("want 1 user, got %d", len(got))
 	}
 }
+
+func TestCreate_DuplicateEmail(t *testing.T) {
+	r := newRouter()
+
+	// create pertama
+	body := []byte(`{"name":"Alea","email":"alea@example.com"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/users", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("want 201, got %d", rec.Code)
+	}
+
+	// create kedua dengan email sama -> 409
+	req2 := httptest.NewRequest(http.MethodPost, "/v1/users", bytes.NewReader(body))
+	req2.Header.Set("Content-Type", "application/json")
+	rec2 := httptest.NewRecorder()
+	r.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusConflict {
+		t.Fatalf("want 409, got %d (body: %s)", rec2.Code, rec2.Body.String())
+	}
+}
