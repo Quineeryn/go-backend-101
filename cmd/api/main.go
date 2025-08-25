@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
 
 	"github.com/Quineeryn/go-backend-101/internal/config"
 	"github.com/Quineeryn/go-backend-101/internal/docs"
@@ -17,6 +18,7 @@ import (
 )
 
 func main() {
+	godotenv.Load() // load .env file if exists
 	cfg := config.FromEnv()
 	db := config.OpenDB(cfg.DBDSN)
 
@@ -24,10 +26,10 @@ func main() {
 	slog.SetDefault(logger)
 
 	// Migrate schema sebelum start server
-	if err := users.AutoMigrate(db); err != nil {
-		slog.Error("migrate.failed", "err", err)
-		os.Exit(1)
-	}
+	// if err := users.AutoMigrate(db); err != nil {
+	// 	slog.Error("migrate.failed", "err", err)
+	// 	os.Exit(1)
+	// }
 
 	// ==== Gin router ====
 	r := gin.New()

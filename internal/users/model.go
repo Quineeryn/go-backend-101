@@ -1,13 +1,11 @@
 package users
 
-import "gorm.io/gorm"
+import "time"
 
 type User struct {
-	ID    string `gorm:"primaryKey"`
-	Name  string `gorm:"not null"`
-	Email string `gorm:"not null;uniqueIndex"`
-}
-
-func AutoMigrate(db *gorm.DB) {
-	db.AutoMigrate(&User{})
+	ID        string    `json:"id" gorm:"type:text;primaryKey"`
+	Name      string    `json:"name" gorm:"type:text;not null"`
+	Email     string    `json:"email" gorm:"type:text;not null;uniqueIndex"`
+	CreatedAt time.Time `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt time.Time `json:"updated_at" gorm:"autoUpdateTime"`
 }

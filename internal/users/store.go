@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/jackc/pgconn"
 	"gorm.io/gorm"
 )
 
@@ -19,6 +20,15 @@ func isDuplicateErr(err error) bool {
 	if errors.Is(err, gorm.ErrDuplicatedKey) {
 		return true
 	}
+
+	// 2) Postgres (pgx/pgconn) → kode 23505 = unique_violation
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		if pgErr.Code == "23505" {
+			return true
+		}
+	}
+
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "unique constraint failed") ||
 		strings.Contains(msg, "duplicate key value violates unique constraint")
@@ -27,6 +37,8 @@ func isDuplicateErr(err error) bool {
 func (s *Store) Create(ctx context.Context, u User) (User, error) {
 	u.Name = strings.TrimSpace(u.Name)
 	u.Email = strings.TrimSpace(u.Email)
+	u.Name = strings.TrimSpace(u.Name)
+	u.Email = strings.ToLower(strings.TrimSpace(u.Email))
 
 	if err := s.db.WithContext(ctx).Create(&u).Error; err != nil {
 		if isDuplicateErr(err) {
@@ -70,6 +82,9 @@ func (s *Store) Update(ctx context.Context, id string, data User) (User, error) 
 
 	data.Name = strings.TrimSpace(data.Name)
 	data.Email = strings.TrimSpace(data.Email)
+	data.Name = strings.TrimSpace(u.Name)
+	data.Email = strings.ToLower(strings.TrimSpace(u.Email))
+
 	if data.Name == "" || data.Email == "" {
 		return User{}, errors.New("name and email are required")
 	}
