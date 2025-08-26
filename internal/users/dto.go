@@ -25,9 +25,13 @@ func toResponse(u User) UserResponse {
 func (r *CreateUserRequest) Normalize() {
 	r.Name = strings.TrimSpace(r.Name)
 	r.Email = strings.TrimSpace(r.Email)
+	r.Name = strings.TrimSpace(r.Name)
+	r.Email = strings.ToLower(strings.TrimSpace(r.Email))
 }
 
 func (r *UpdateUserRequest) Normalize() {
 	r.Name = strings.TrimSpace(r.Name)
 	r.Email = strings.TrimSpace(r.Email)
+	r.Name = strings.TrimSpace(r.Name)
+	r.Email = strings.ToLower(strings.TrimSpace(r.Email))
 }

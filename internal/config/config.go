@@ -3,14 +3,16 @@ package config
 import "os"
 
 type Config struct {
-	Port string
-	Env  string
+	Port  string
+	Env   string
+	DBDSN string
 }
 
 func FromEnv() Config {
 	return Config{
-		Port: getEnv("PORT", "8080"),
-		Env:  getEnv("APP_ENV", "development"),
+		Port:  getEnv("PORT", "8080"),
+		Env:   getEnv("APP_ENV", "development"),
+		DBDSN: getEnv("DB_DSN", ""),
 	}
 }
 

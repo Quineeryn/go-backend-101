@@ -2,81 +2,138 @@ package users
 
 import (
 	"net/http"
-	"regexp"
+	"time"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-
-	"github.com/Quineeryn/go-backend-101/internal/httpx"
 )
 
-var emailRx = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
+type Handler struct {
+	store *Store
+}
 
-func NewRouter(store *Store) chi.Router {
-	r := chi.NewRouter()
+func NewHandler(s *Store) *Handler { return &Handler{store: s} }
 
-	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		list := store.List()
-		res := make([]UserResponse, 0, len(list))
-		for _, u := range list {
-			res = append(res, toResponse(u))
-		}
-		httpx.WriteJSON(w, http.StatusOK, res)
+type errorResponse struct {
+	Code    int    `json:"code"`
+	Error   string `json:"error"`
+	Message string `json:"message,omitempty"`
+	Details string `json:"details,omitempty"`
+	Time    string `json:"time"`
+}
+
+func writeError(c *gin.Context, status int, msg, details string) {
+	c.JSON(status, errorResponse{
+		Code:    status,
+		Error:   http.StatusText(status),
+		Message: msg,
+		Details: details,
+		Time:    time.Now().UTC().Format(time.RFC3339),
 	})
+}
 
-	r.Post("/", func(w http.ResponseWriter, r *http.Request) {
-		var req CreateUserRequest
-		if err := httpx.DecodeJSON(r, &req); err != nil {
-			httpx.WriteError(w, http.StatusBadRequest, "invalid json", err.Error())
-			return
-		}
-		req.Normalize()
-		if req.Name == "" || req.Email == "" || !emailRx.MatchString(req.Email) {
-			httpx.WriteError(w, http.StatusBadRequest, "invalid name or email", nil)
-			return
-		}
-		u := User{ID: uuid.NewString(), Name: req.Name, Email: req.Email}
-		httpx.WriteJSON(w, http.StatusCreated, toResponse(store.Create(u)))
-	})
+// POST /v1/users
+func (h *Handler) Create(c *gin.Context) {
+	var req CreateUserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, "invalid request body", err.Error())
+		return
+	}
+	req.Normalize()
+	if req.Name == "" || req.Email == "" {
+		writeError(c, http.StatusBadRequest, "name and email are required", "")
+		return
+	}
 
-	r.Get("/{id}", func(w http.ResponseWriter, r *http.Request) {
-		id := chi.URLParam(r, "id")
-		u, err := store.Get(id)
-		if err != nil {
-			httpx.WriteError(w, http.StatusNotFound, "user not found", nil)
+	u := User{
+		ID:    uuid.NewString(),
+		Name:  req.Name,
+		Email: req.Email,
+	}
+	created, err := h.store.Create(c.Request.Context(), u)
+	if err != nil {
+		if err == ErrDuplicate {
+			writeError(c, http.StatusConflict, "duplicate email", "email already exists")
 			return
 		}
-		httpx.WriteJSON(w, http.StatusOK, toResponse(u))
-	})
+		writeError(c, http.StatusInternalServerError, "failed to create user", err.Error())
+		return
+	}
 
-	r.Put("/{id}", func(w http.ResponseWriter, r *http.Request) {
-		id := chi.URLParam(r, "id")
-		var req UpdateUserRequest
-		if err := httpx.DecodeJSON(r, &req); err != nil {
-			httpx.WriteError(w, http.StatusBadRequest, "invalid json", err.Error())
-			return
-		}
-		req.Normalize()
-		if req.Name == "" || req.Email == "" || !emailRx.MatchString(req.Email) {
-			httpx.WriteError(w, http.StatusBadRequest, "invalid name or email", nil)
-			return
-		}
-		upd, err := store.Update(id, User{Name: req.Name, Email: req.Email})
-		if err != nil {
-			httpx.WriteError(w, http.StatusNotFound, "user not found", nil)
-			return
-		}
-		httpx.WriteJSON(w, http.StatusOK, toResponse(upd))
-	})
+	c.JSON(http.StatusCreated, toResponse(created))
+}
 
-	r.Delete("/{id}", func(w http.ResponseWriter, r *http.Request) {
-		id := chi.URLParam(r, "id")
-		if err := store.Delete(id); err != nil {
-			httpx.WriteError(w, http.StatusNotFound, "user not found", nil)
+// GET /v1/users
+func (h *Handler) List(c *gin.Context) {
+	usersList, err := h.store.List(c.Request.Context())
+	if err != nil {
+		writeError(c, http.StatusInternalServerError, "failed to list users", err.Error())
+		return
+	}
+	out := make([]UserResponse, 0, len(usersList))
+	for _, u := range usersList {
+		out = append(out, toResponse(u))
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+// GET /v1/users/:id
+func (h *Handler) Get(c *gin.Context) {
+	id := c.Param("id")
+	u, err := h.store.Get(c.Request.Context(), id)
+	if err != nil {
+		if err == ErrNotFound {
+			writeError(c, http.StatusNotFound, "user not found", "")
 			return
 		}
-		w.WriteHeader(http.StatusNoContent)
-	})
+		writeError(c, http.StatusInternalServerError, "failed to get user", err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, toResponse(u))
+}
 
-	return r
+// PUT /v1/users/:id
+func (h *Handler) Update(c *gin.Context) {
+	id := c.Param("id")
+	var req UpdateUserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, "invalid request body", err.Error())
+		return
+	}
+	req.Normalize()
+	if req.Name == "" || req.Email == "" {
+		writeError(c, http.StatusBadRequest, "name and email are required", "")
+		return
+	}
+
+	data := User{Name: req.Name, Email: req.Email}
+	updated, err := h.store.Update(c.Request.Context(), id, data)
+	if err != nil {
+		switch err {
+		case ErrNotFound:
+			writeError(c, http.StatusNotFound, "user not found", "")
+			return
+		case ErrDuplicate:
+			writeError(c, http.StatusConflict, "duplicate email", "email already exists")
+			return
+		default:
+			writeError(c, http.StatusInternalServerError, "failed to update user", err.Error())
+			return
+		}
+	}
+	c.JSON(http.StatusOK, toResponse(updated))
+}
+
+// DELETE /v1/users/:id
+func (h *Handler) Delete(c *gin.Context) {
+	id := c.Param("id")
+	if err := h.store.Delete(c.Request.Context(), id); err != nil {
+		if err == ErrNotFound {
+			writeError(c, http.StatusNotFound, "user not found", "")
+			return
+		}
+		writeError(c, http.StatusInternalServerError, "failed to delete user", err.Error())
+		return
+	}
+	c.Status(http.StatusNoContent)
 }

@@ -1,67 +1,116 @@
 package users
 
 import (
+	"context"
 	"errors"
-	"sync"
+	"fmt"
+	"strings"
+
+	"github.com/jackc/pgconn"
+	"gorm.io/gorm"
 )
 
-var ErrNotFound = errors.New("user not found")
-
 type Store struct {
-	mu    sync.RWMutex
-	items map[string]User
+	db *gorm.DB
 }
 
-func NewStore() *Store {
-	return &Store{
-		items: make(map[string]User),
+func NewStore(db *gorm.DB) *Store { return &Store{db: db} }
+
+// isDuplicateErr tries to normalize unique-violation across drivers.
+func isDuplicateErr(err error) bool {
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
 	}
-}
 
-func (s *Store) Create(user User) User {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.items[user.ID] = user
-	return user
-}
-
-func (s *Store) Get(id string) (User, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	user, exists := s.items[id]
-	if !exists {
-		return User{}, ErrNotFound
+	// 2) Postgres (pgx/pgconn) → kode 23505 = unique_violation
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		if pgErr.Code == "23505" {
+			return true
+		}
 	}
-	return user, nil
+
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "sqlstate 23505") ||
+		strings.Contains(msg, "duplicate key value violates unique constraint") ||
+		strings.Contains(msg, "unique constraint failed")
 }
 
-func (s *Store) List() []User {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := make([]User, 0, len(s.items))
-	for _, user := range s.items {
-		out = append(out, user)
+func (s *Store) Create(ctx context.Context, u User) (User, error) {
+	u.Name = strings.TrimSpace(u.Name)
+	u.Email = strings.TrimSpace(u.Email)
+	u.Name = strings.TrimSpace(u.Name)
+	u.Email = strings.ToLower(strings.TrimSpace(u.Email))
+
+	if err := s.db.WithContext(ctx).Create(&u).Error; err != nil {
+		if isDuplicateErr(err) {
+			fmt.Printf("%T %#v\n", err, err)
+			return User{}, ErrDuplicate
+		}
+		return User{}, err
 	}
-	return out
+	return u, nil
 }
 
-func (s *Store) Update(id string, user User) (User, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.items[id]; !ok {
-		return User{}, ErrNotFound
+func (s *Store) List(ctx context.Context) ([]User, error) {
+	var users []User
+	if err := s.db.WithContext(ctx).
+		Select("id", "name", "email", "created_at").
+		Order("created_at ASC").
+		Find(&users).Error; err != nil {
+		return nil, err
 	}
-	user.ID = id
-	s.items[id] = user
-	return user, nil
+	return users, nil
 }
 
-func (s *Store) Delete(id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.items[id]; !ok {
+func (s *Store) Get(ctx context.Context, id string) (User, error) {
+	var u User
+	if err := s.db.WithContext(ctx).First(&u, "id = ?", id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return User{}, ErrNotFound
+		}
+		return User{}, err
+	}
+	return u, nil
+}
+
+func (s *Store) Update(ctx context.Context, id string, data User) (User, error) {
+	var u User
+	if err := s.db.WithContext(ctx).First(&u, "id = ?", id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return User{}, ErrNotFound
+		}
+		return User{}, err
+	}
+
+	data.Name = strings.TrimSpace(data.Name)
+	data.Email = strings.TrimSpace(data.Email)
+	data.Name = strings.TrimSpace(u.Name)
+	data.Email = strings.ToLower(strings.TrimSpace(u.Email))
+
+	if data.Name == "" || data.Email == "" {
+		return User{}, errors.New("name and email are required")
+	}
+
+	u.Name = data.Name
+	u.Email = data.Email
+
+	if err := s.db.WithContext(ctx).Save(&u).Error; err != nil {
+		if isDuplicateErr(err) {
+			return User{}, ErrDuplicate
+		}
+		return User{}, err
+	}
+	return u, nil
+}
+
+func (s *Store) Delete(ctx context.Context, id string) error {
+	res := s.db.WithContext(ctx).Delete(&User{}, "id = ?", id)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
 		return ErrNotFound
 	}
-	delete(s.items, id)
 	return nil
 }
