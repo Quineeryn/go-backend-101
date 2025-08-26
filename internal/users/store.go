@@ -3,6 +3,7 @@ package users
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/jackc/pgconn"
@@ -30,8 +31,9 @@ func isDuplicateErr(err error) bool {
 	}
 
 	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "unique constraint failed") ||
-		strings.Contains(msg, "duplicate key value violates unique constraint")
+	return strings.Contains(msg, "sqlstate 23505") ||
+		strings.Contains(msg, "duplicate key value violates unique constraint") ||
+		strings.Contains(msg, "unique constraint failed")
 }
 
 func (s *Store) Create(ctx context.Context, u User) (User, error) {
@@ -42,6 +44,7 @@ func (s *Store) Create(ctx context.Context, u User) (User, error) {
 
 	if err := s.db.WithContext(ctx).Create(&u).Error; err != nil {
 		if isDuplicateErr(err) {
+			fmt.Printf("%T %#v\n", err, err)
 			return User{}, ErrDuplicate
 		}
 		return User{}, err
