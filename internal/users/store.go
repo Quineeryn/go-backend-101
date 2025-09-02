@@ -3,7 +3,6 @@ package users
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/jackc/pgconn"
@@ -44,7 +43,6 @@ func (s *Store) Create(ctx context.Context, u User) (User, error) {
 
 	if err := s.db.WithContext(ctx).Create(&u).Error; err != nil {
 		if isDuplicateErr(err) {
-			fmt.Printf("%T %#v\n", err, err)
 			return User{}, ErrDuplicate
 		}
 		return User{}, err

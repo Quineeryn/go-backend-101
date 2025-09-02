@@ -1,3 +1,5 @@
+DB_DSN=host=127.0.0.1 user=postgres password=canandra10 dbname=go_backend_101 port=5432 sslmode=disable TimeZone=Asia/Jakarta
+
 .PHONY: run test fmt vet tidy
 
 run:
@@ -7,7 +9,7 @@ test:
 	go test ./... -short
 
 itest:
-	DB_DSN?=host=127.0.0.1 user=postgres password=canandra10 dbname=go_backend_101 port=5432 sslmode=disable TimeZone=Asia/Jakarta go test ./... -run Integration
+	DB_DSN="$(DB_DSN)" go test -tags=integration ./... -run Integration -v
 fmt:
 	go fmt ./...
 
