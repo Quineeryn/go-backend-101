@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
@@ -113,9 +114,14 @@ func (h *Handler) Refresh(c *gin.Context) {
 
 	// cek refresh masih aktif
 	active, err := h.Tokens.IsActive(c, claims.ID)
-	if err != nil || !active {
-		c.Status(http.StatusUnauthorized)
+	if err != nil {
+		c.Status(http.StatusInternalServerError)
 		c.Error(err)
+		return
+	}
+	if !active {
+		c.Status(http.StatusUnauthorized)
+		c.Error(errors.New("refresh token is not active"))
 		return
 	}
 
@@ -143,7 +149,10 @@ func (h *Handler) Refresh(c *gin.Context) {
 		ExpiresAt: time.Now().UTC().Add(h.JWT.RefreshTTL),
 	})
 
-	c.JSON(http.StatusOK, gin.H{"access_token": newAccess, "refresh_token": newRefresh})
+	c.JSON(http.StatusOK, gin.H{
+		"access_token":  newAccess,
+		"refresh_token": newRefresh,
+	})
 }
 
 func (h *Handler) Logout(c *gin.Context) {

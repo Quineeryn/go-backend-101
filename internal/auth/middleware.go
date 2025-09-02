@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -13,7 +14,8 @@ func RequireAuth(mgr *Manager) gin.HandlerFunc {
 		h := c.GetHeader("Authorization")
 		if !strings.HasPrefix(h, "Bearer ") {
 			c.Status(http.StatusUnauthorized)
-			c.Error(gin.Error{Err: http.ErrNoCookie, Type: gin.ErrorTypePublic})
+			c.Error(errors.New("missing or invalid Authorization header"))
+			c.Abort()
 			return
 		}
 		raw := strings.TrimPrefix(h, "Bearer ")
@@ -21,6 +23,7 @@ func RequireAuth(mgr *Manager) gin.HandlerFunc {
 		if err != nil {
 			c.Status(http.StatusUnauthorized)
 			c.Error(err)
+			c.Abort()
 			return
 		}
 		// inject ke context
