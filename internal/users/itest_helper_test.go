@@ -37,6 +37,8 @@ func TestMain(m *testing.M) {
 func newRouterIT(t *testing.T) *gin.Engine {
 	t.Helper()
 
+	gin.SetMode(gin.TestMode)
+
 	// Bersihkan data antar test (TRUNCATE lebih aman untuk FK; di sini tabel tunggal)
 	if err := itestDB.Exec(`TRUNCATE TABLE users RESTART IDENTITY`).Error; err != nil {
 		// Kalau pakai TEXT id manual, RESTART IDENTITY nggak ngaruh — tetap aman
