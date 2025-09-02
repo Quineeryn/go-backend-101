@@ -3,10 +3,13 @@ DB_DSN=host=127.0.0.1 user=postgres password=canandra10 dbname=go_backend_101 po
 .PHONY: run test fmt vet tidy
 
 run:
-	go run ./cmd/api
+	CGO_ENABLED=0 go run ./cmd/api
 
 test:
-	go test ./... -short
+	CGO_ENABLED=0 go test ./...
+
+build:
+	CGO_ENABLED=0 go build -o bin/api ./cmd/api
 
 itest:
 	DB_DSN="$(DB_DSN)" go test -tags=integration ./... -run Integration -v
