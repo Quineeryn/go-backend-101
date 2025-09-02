@@ -14,6 +14,7 @@ import (
 
 	"github.com/Quineeryn/go-backend-101/internal/config"
 	"github.com/Quineeryn/go-backend-101/internal/docs"
+	"github.com/Quineeryn/go-backend-101/internal/middleware"
 	"github.com/Quineeryn/go-backend-101/internal/users"
 )
 
@@ -44,6 +45,14 @@ func main() {
 
 	// Users
 	store := users.NewStore(db)
+
+	r.Use(
+		middleware.RequestLogger(),
+		middleware.ErrorEnvelope(),
+		middleware.EnsureCorrelationID(),
+		middleware.RecoveryJSON(),
+	)
+
 	users.RegisterRoutes(r, users.NewHandler(store)) // akan mendaftarkan /v1/users (tanpa trailing slash)
 
 	// Docs (handler kamu kemungkinan http.HandlerFunc → bungkus pakai WrapF)
