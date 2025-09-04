@@ -8,6 +8,7 @@ import (
 
 type Claims struct {
 	UserID string `json:"uid"`
+	Role   string `json:"role"`
 	jwt.RegisteredClaims
 }
 
@@ -17,10 +18,11 @@ type Manager struct {
 	RefreshTTL time.Duration
 }
 
-func (m *Manager) SignAccess(userID string, jti string) (string, error) {
+func (m *Manager) SignAccess(userID string, role, jti string) (string, error) {
 	now := time.Now().UTC()
 	claims := Claims{
 		UserID: userID,
+		Role:   role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(now.Add(m.AccessTTL)),
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -31,10 +33,11 @@ func (m *Manager) SignAccess(userID string, jti string) (string, error) {
 	return token.SignedString(m.Secret)
 }
 
-func (m *Manager) SignRefresh(userID string, jti string) (string, error) {
+func (m *Manager) SignRefresh(userID string, role, jti string) (string, error) {
 	now := time.Now().UTC()
 	claims := Claims{
 		UserID: userID,
+		Role:   role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(now.Add(m.RefreshTTL)),
 			IssuedAt:  jwt.NewNumericDate(now),
