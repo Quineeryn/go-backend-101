@@ -112,3 +112,15 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 	}
 	return nil
 }
+
+func (s *Store) FindByEmail(ctx context.Context, email string) (User, error) {
+	var u User
+	err := s.db.WithContext(ctx).Where("email = ?", email).First(&u).Error
+	return u, err
+}
+
+func (s *Store) FindByID(ctx context.Context, id string) (User, error) {
+	var u User
+	err := s.db.WithContext(ctx).Where("id = ?", id).First(&u).Error
+	return u, err
+}
