@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -14,7 +15,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	gormpg "gorm.io/driver/postgres"
 	gormsqlite "gorm.io/driver/sqlite"
+
 	"gorm.io/gorm"
 	_ "modernc.org/sqlite" // penting: register driver "sqlite" (pure Go, no CGO)
 
@@ -33,32 +36,56 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 
-	// === DB (GORM + modernc.org/sqlite; no CGO) ===
+	// === DB (GORM: Postgres atau SQLite) ===
 	dsn := cfg.DBDSN
 	if dsn == "" {
-		dsn = "var/app.db"
+		dsn = "var/app.db" // fallback dev
 	}
-	ensureDirFor(dsn)
+	dialect := "sqlite"
+	if strings.HasPrefix(dsn, "postgres://") || strings.Contains(dsn, "host=") {
+		dialect = "postgres"
+	}
 
-	// gunakan driver name "sqlite" (punya modernc)
-	dial := gormsqlite.Dialector{
-		DriverName: "sqlite",
-		DSN:        stripSQLiteURI(dsn),
+	var db *gorm.DB
+	var err error
+
+	if dialect == "postgres" {
+		db, err = gorm.Open(gormpg.Open(dsn), &gorm.Config{})
+		if err != nil {
+			slog.Error("db.open.failed", "dialect", "postgres", "err", err)
+			os.Exit(1)
+		}
+		// (opsional) pool tuning
+		sqlDB, _ := db.DB()
+		sqlDB.SetMaxOpenConns(30)
+		sqlDB.SetMaxIdleConns(10)
+		sqlDB.SetConnMaxLifetime(30 * time.Minute)
+	} else {
+		ensureDirFor(dsn) // hanya untuk SQLite (file)
+		dial := gormsqlite.Dialector{DriverName: "sqlite", DSN: stripSQLiteURI(dsn)}
+		db, err = gorm.Open(dial, &gorm.Config{})
+		if err != nil {
+			slog.Error("db.open.failed", "dialect", "sqlite", "err", err)
+			os.Exit(1)
+		}
+		// PRAGMA khusus SQLite
+		_ = db.Exec("PRAGMA foreign_keys = ON;").Error
+		_ = db.Exec("PRAGMA journal_mode = WAL;").Error
+		_ = db.Exec("PRAGMA busy_timeout = 5000;").Error
 	}
-	db, err := gorm.Open(dial, &gorm.Config{})
-	if err != nil {
-		slog.Error("db.open.failed", "dsn", dsn, "err", err)
-		os.Exit(1)
-	}
-	// PRAGMA yang umum
-	_ = db.Exec("PRAGMA foreign_keys = ON;").Error
-	_ = db.Exec("PRAGMA journal_mode = WAL;").Error
-	_ = db.Exec("PRAGMA busy_timeout = 5000;").Error
 
 	// === migrate (aman untuk dev) ===
-	if err := db.AutoMigrate(&users.User{}, &auth.RefreshToken{}); err != nil {
-		slog.Error("migrate.failed", "err", err)
-		os.Exit(1)
+	// === migrate (DEV only via toggle) ===
+	// === migrate (DEV only) ===
+	if getEnv("AUTO_MIGRATE", "false") == "true" {
+		if dialect == "sqlite" {
+			if err := db.AutoMigrate(&users.User{}, &auth.RefreshToken{}); err != nil {
+				slog.Error("migrate.failed", "err", err)
+				os.Exit(1)
+			}
+		} else {
+			slog.Warn("AUTO_MIGRATE ignored on Postgres; run `make migrate-pg` instead")
+		}
 	}
 
 	// === deps ===
@@ -100,7 +127,6 @@ func main() {
 	// users (pakai handler kamu)
 	users.RegisterRoutes(r, users.NewHandler(userStore))
 
-	// auth (CP-07)
 	authH := auth.Handler{Users: userStore, Tokens: tokenStore, JWT: jwtMgr}
 	v1 := r.Group("/v1")
 	{
@@ -202,4 +228,27 @@ func ensureDirFor(dsn string) {
 	if dir != "." && dir != "" {
 		_ = os.MkdirAll(dir, 0o755)
 	}
+}
+
+// Pastikan kolom/tabel penting sudah ada saat AUTO_MIGRATE=false
+func schemaGuard(db *gorm.DB) error {
+	m := db.Migrator()
+	type pair struct {
+		model any
+		col   string
+	}
+	checks := []pair{
+		{&users.User{}, "password_hash"},
+		{&users.User{}, "role"},
+	}
+	// tabel refresh_tokens minimal harus ada
+	if !m.HasTable(&auth.RefreshToken{}) {
+		return fmt.Errorf("missing table refresh_tokens")
+	}
+	for _, c := range checks {
+		if !m.HasColumn(c.model, c.col) {
+			return fmt.Errorf("missing column %T.%s", c.model, c.col)
+		}
+	}
+	return nil
 }

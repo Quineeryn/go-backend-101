@@ -22,6 +22,9 @@ vet:
 tidy:
 	go mod tidy
 
+migrate-pg:
+	CGO_ENABLED=0 go run ./cmd/migrate
+
 
 MIGRATE?=migrate
 DB_URL?=postgres://postgres:canandra10@127.0.0.1:5432/go_backend_101?sslmode=disable
