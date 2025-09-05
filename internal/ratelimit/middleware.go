@@ -2,6 +2,7 @@ package ratelimit
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -18,6 +19,8 @@ func Middleware(store *Store, keyFn func(*gin.Context) string, rps rate.Limit, b
 
 		// ✅ konsumsi 1 token kalau boleh sekarang
 		if lim.Allow() {
+			// (opsional) expose policy di response sukses juga:
+			c.Header("X-RateLimit-Policy", fmt.Sprintf("rps=%.2f; burst=%d", float64(rps), burst))
 			c.Next()
 			return
 		}
@@ -38,6 +41,7 @@ func Middleware(store *Store, keyFn func(*gin.Context) string, rps rate.Limit, b
 		if sec < 1 {
 			sec = 1
 		}
+		c.Header("X-RateLimit-Policy", fmt.Sprintf("rps=%.2f; burst=%d", float64(rps), burst)) // <--- dan di sini
 		c.Header("Retry-After", itoa(sec))
 		c.Status(http.StatusTooManyRequests)
 		_ = c.Error(errors.New("rate limit exceeded"))
