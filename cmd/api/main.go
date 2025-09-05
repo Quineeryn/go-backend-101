@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	// <--- tambah
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	"golang.org/x/time/rate"
@@ -24,6 +26,7 @@ import (
 	_ "modernc.org/sqlite" // penting: register driver "sqlite" (pure Go, no CGO)
 
 	"github.com/Quineeryn/go-backend-101/internal/auth"
+	"github.com/Quineeryn/go-backend-101/internal/cache"
 	"github.com/Quineeryn/go-backend-101/internal/config"
 	"github.com/Quineeryn/go-backend-101/internal/docs"
 	"github.com/Quineeryn/go-backend-101/internal/middleware"
@@ -118,6 +121,9 @@ func main() {
 		middleware.RecoveryJSON(),
 	)
 
+	// --- Cache store (in-memory) ---
+	cstore := cache.NewMemory(5 * time.Minute)
+
 	// --- Rate limiting ---
 	// store in-memory untuk token bucket; GC tiap 10 menit
 	rlStore := ratelimit.NewStore(10 * time.Minute)
@@ -157,17 +163,56 @@ func main() {
 		// contoh protected
 		v1.GET("/users/me", auth.RequireAuth(jwtMgr), func(c *gin.Context) {
 			uid := c.GetString("user_id")
+			key := "me:" + uid
+
+			if b, ok := cstore.Get(key); ok {
+				// ETag check dari cache
+				etag := cache.WeakETag(b)
+				if inm := c.GetHeader("If-None-Match"); inm != "" && inm == etag {
+					c.Header("ETag", etag)
+					c.Header("X-Cache", "HIT")
+					c.Status(http.StatusNotModified)
+					return
+				}
+				c.Header("ETag", etag)
+				c.Header("X-Cache", "HIT")
+				c.Data(http.StatusOK, "application/json; charset=utf-8", b)
+				return
+			}
+
+			// MISS -> ambil dari DB
 			u, err := userStore.FindByID(c, uid)
 			if err != nil {
 				c.Status(http.StatusNotFound)
 				c.Error(err)
 				return
 			}
-			c.JSON(http.StatusOK, gin.H{
+			// build body JSON manual (agar bisa cache byte result)
+			payload := map[string]any{
 				"id":    u.ID,
 				"name":  u.Name,
 				"email": u.Email,
-			})
+			}
+			body, err := json.Marshal(payload)
+			if err != nil {
+				c.Status(http.StatusInternalServerError)
+				c.Error(err)
+				return
+			}
+
+			// simpan ke cache (TTL 30s)
+			cstore.Set(key, body, 30*time.Second)
+
+			etag := cache.WeakETag(body)
+			if inm := c.GetHeader("If-None-Match"); inm != "" && inm == etag {
+				c.Header("ETag", etag)
+				c.Header("X-Cache", "MISS-ETAG-NOTMOD")
+				c.Status(http.StatusNotModified)
+				return
+			}
+			c.Header("ETag", etag)
+			c.Header("X-Cache", "MISS")
+			c.Data(http.StatusOK, "application/json; charset=utf-8", body)
 		})
 
 		// Admin-only sample
@@ -210,6 +255,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(ctx)
+	cstore.Close()
 	logger.Info("server.stopped")
 }
 
