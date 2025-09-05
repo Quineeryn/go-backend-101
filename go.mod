@@ -63,6 +63,7 @@ require (
 	golang.org/x/crypto v0.31.0
 	golang.org/x/sync v0.15.0 // indirect
 	golang.org/x/text v0.21.0 // indirect
+	golang.org/x/time v0.12.0
 	gorm.io/driver/postgres v1.6.0
 	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gorm v1.30.1

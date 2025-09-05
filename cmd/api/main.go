@@ -3,18 +3,22 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	// <--- tambah
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	"golang.org/x/time/rate"
 	gormpg "gorm.io/driver/postgres"
 	gormsqlite "gorm.io/driver/sqlite"
 
@@ -22,9 +26,11 @@ import (
 	_ "modernc.org/sqlite" // penting: register driver "sqlite" (pure Go, no CGO)
 
 	"github.com/Quineeryn/go-backend-101/internal/auth"
+	"github.com/Quineeryn/go-backend-101/internal/cache"
 	"github.com/Quineeryn/go-backend-101/internal/config"
 	"github.com/Quineeryn/go-backend-101/internal/docs"
 	"github.com/Quineeryn/go-backend-101/internal/middleware"
+	"github.com/Quineeryn/go-backend-101/internal/ratelimit"
 	"github.com/Quineeryn/go-backend-101/internal/users"
 )
 
@@ -115,6 +121,17 @@ func main() {
 		middleware.RecoveryJSON(),
 	)
 
+	// --- Cache store (in-memory) ---
+	cstore := cache.NewMemory(5 * time.Minute)
+
+	// --- Rate limiting ---
+	// store in-memory untuk token bucket; GC tiap 10 menit
+	rlStore := ratelimit.NewStore(10 * time.Minute)
+	// limiter default per IP per route
+	defaultRPS := rate.Limit(mustParseFloat(getEnv("RATE_LIMIT_DEFAULT_RPS", "2")))
+	defaultBurst := mustParseInt(getEnv("RATE_LIMIT_DEFAULT_BURST", "10"))
+	r.Use(ratelimit.Middleware(rlStore, ratelimit.KeyPerIP, defaultRPS, defaultBurst))
+
 	// health
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -131,24 +148,72 @@ func main() {
 	v1 := r.Group("/v1")
 	{
 		v1.POST("/auth/register", authH.Register)
-		v1.POST("/auth/login", authH.Login)
+
+		// limiter khusus login: per IP + email (lebih ketat)
+		authRPS := rate.Limit(mustParseFloat(getEnv("RATE_LIMIT_AUTH_RPS", "0.2"))) // ~12/min
+		authBurst := mustParseInt(getEnv("RATE_LIMIT_AUTH_BURST", "5"))
+		v1.POST("/auth/login",
+			ratelimit.Middleware(rlStore, ratelimit.KeyLogin, authRPS, authBurst),
+			authH.Login,
+		)
+
 		v1.POST("/auth/refresh", authH.Refresh)
 		v1.POST("/auth/logout", authH.Logout)
 
 		// contoh protected
 		v1.GET("/users/me", auth.RequireAuth(jwtMgr), func(c *gin.Context) {
 			uid := c.GetString("user_id")
+			key := "me:" + uid
+
+			if b, ok := cstore.Get(key); ok {
+				// ETag check dari cache
+				etag := cache.WeakETag(b)
+				if inm := c.GetHeader("If-None-Match"); inm != "" && inm == etag {
+					c.Header("ETag", etag)
+					c.Header("X-Cache", "HIT")
+					c.Status(http.StatusNotModified)
+					return
+				}
+				c.Header("ETag", etag)
+				c.Header("X-Cache", "HIT")
+				c.Data(http.StatusOK, "application/json; charset=utf-8", b)
+				return
+			}
+
+			// MISS -> ambil dari DB
 			u, err := userStore.FindByID(c, uid)
 			if err != nil {
 				c.Status(http.StatusNotFound)
 				c.Error(err)
 				return
 			}
-			c.JSON(http.StatusOK, gin.H{
-				"id":    u.ID,
-				"name":  u.Name,
-				"email": u.Email,
-			})
+			// build body JSON manual (agar bisa cache byte result)
+			type mePayload struct {
+				ID    string `json:"id"`
+				Name  string `json:"name"`
+				Email string `json:"email"`
+			}
+			payload := mePayload{ID: u.ID, Name: u.Name, Email: u.Email}
+			body, err := json.Marshal(payload)
+			if err != nil {
+				c.Status(http.StatusInternalServerError)
+				c.Error(err)
+				return
+			}
+
+			// simpan ke cache (TTL 30s)
+			cstore.Set(key, body, 30*time.Second)
+
+			etag := cache.WeakETag(body)
+			if inm := c.GetHeader("If-None-Match"); inm != "" && inm == etag {
+				c.Header("ETag", etag)
+				c.Header("X-Cache", "MISS-ETAG-NOTMOD")
+				c.Status(http.StatusNotModified)
+				return
+			}
+			c.Header("ETag", etag)
+			c.Header("X-Cache", "MISS")
+			c.Data(http.StatusOK, "application/json; charset=utf-8", body)
 		})
 
 		// Admin-only sample
@@ -191,6 +256,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(ctx)
+	cstore.Close()
 	logger.Info("server.stopped")
 }
 
@@ -264,4 +330,20 @@ func schemaGuard(db *gorm.DB) error {
 		}
 	}
 	return nil
+}
+
+func mustParseFloat(s string) float64 {
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 1.0
+	}
+	return v
+}
+
+func mustParseInt(s string) int {
+	v, err := strconv.Atoi(s)
+	if err != nil {
+		return 1
+	}
+	return v
 }
