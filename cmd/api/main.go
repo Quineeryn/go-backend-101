@@ -25,10 +25,14 @@ import (
 	"gorm.io/gorm"
 	_ "modernc.org/sqlite" // penting: register driver "sqlite" (pure Go, no CGO)
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
 	"github.com/Quineeryn/go-backend-101/internal/auth"
 	"github.com/Quineeryn/go-backend-101/internal/cache"
 	"github.com/Quineeryn/go-backend-101/internal/config"
 	"github.com/Quineeryn/go-backend-101/internal/docs"
+	"github.com/Quineeryn/go-backend-101/internal/httpx"
+	"github.com/Quineeryn/go-backend-101/internal/logger"
 	"github.com/Quineeryn/go-backend-101/internal/middleware"
 	"github.com/Quineeryn/go-backend-101/internal/ratelimit"
 	"github.com/Quineeryn/go-backend-101/internal/users"
@@ -39,6 +43,17 @@ func main() {
 
 	// === config & logger ===
 	cfg := config.FromEnv() // PORT, DBDSN, dll
+
+	// setelah load config aplikasi kamu
+	_ = logger.Init(logger.Config{
+		Env:        cfg.Env, // ambil dari config kamu, default "dev"
+		FilePath:   cfg.LogFilePath,
+		MaxSizeMB:  cfg.LogMaxSizeMB,
+		MaxBackups: cfg.LogMaxBackups,
+		MaxAgeDays: cfg.LogMaxAgeDays,
+	})
+	defer logger.L.Sync()
+
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 
@@ -106,6 +121,12 @@ func main() {
 	// === HTTP server ===
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
+	r.Use(gin.Recovery())
+
+	r.Use(httpx.RequestID())
+	r.Use(httpx.AccessLog())
+
+	r.Use(httpx.Metrics())
 
 	// Jangan pakai gin.Recovery(); kita pakai RecoveryJSON agar output error selalu JSON
 	// r.Use(gin.Logger()) // opsional; kalau aktif bisa dobel dengan RequestLogger
@@ -229,6 +250,8 @@ func main() {
 		)
 
 	}
+
+	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	addr := ":" + cfg.Port
 	srv := &http.Server{
