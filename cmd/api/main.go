@@ -188,11 +188,12 @@ func main() {
 				return
 			}
 			// build body JSON manual (agar bisa cache byte result)
-			payload := map[string]any{
-				"id":    u.ID,
-				"name":  u.Name,
-				"email": u.Email,
+			type mePayload struct {
+				ID    string `json:"id"`
+				Name  string `json:"name"`
+				Email string `json:"email"`
 			}
+			payload := mePayload{ID: u.ID, Name: u.Name, Email: u.Email}
 			body, err := json.Marshal(payload)
 			if err != nil {
 				c.Status(http.StatusInternalServerError)
