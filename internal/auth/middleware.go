@@ -28,6 +28,7 @@ func RequireAuth(mgr *Manager) gin.HandlerFunc {
 		}
 		// inject ke context
 		c.Set("user_id", claims.UserID)
+		c.Set("role", claims.Role)
 		// korelasikan trace id di header
 		if v, ok := c.Get(middleware.ContextTraceID); ok {
 			c.Writer.Header().Set(middleware.HeaderRequestID, v.(string))

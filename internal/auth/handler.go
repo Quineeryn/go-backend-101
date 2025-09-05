@@ -40,6 +40,7 @@ func (h *Handler) Register(c *gin.Context) {
 		Name:         in.Name,
 		Email:        in.Email,
 		PasswordHash: &ph,
+		Role:         "user",
 	})
 	if err != nil {
 		c.Status(http.StatusConflict)
@@ -47,7 +48,7 @@ func (h *Handler) Register(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{"id": u.ID, "name": u.Name, "email": u.Email})
+	c.JSON(http.StatusCreated, gin.H{"id": u.ID, "name": u.Name, "email": u.Email, "role": u.Role})
 }
 
 func (h *Handler) Login(c *gin.Context) {
@@ -64,17 +65,23 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 
+	// AMBIL ROLE dari user
+	role := u.Role
+	if role == "" {
+		role = "user"
+	}
+
 	accessJTI := uuid.New().String()
 	refreshJTI := uuid.New().String()
 
-	access, err := h.JWT.SignAccess(u.ID, accessJTI)
+	access, err := h.JWT.SignAccess(u.ID, role, accessJTI)
 	if err != nil {
 		c.Status(http.StatusInternalServerError)
 		c.Error(err)
 		return
 	}
 
-	refresh, err := h.JWT.SignRefresh(u.ID, refreshJTI)
+	refresh, err := h.JWT.SignRefresh(u.ID, role, refreshJTI)
 	if err != nil {
 		c.Status(http.StatusInternalServerError)
 		c.Error(err)
@@ -129,13 +136,13 @@ func (h *Handler) Refresh(c *gin.Context) {
 	_ = h.Tokens.RevokeByJTI(c, claims.ID)
 
 	newJTI := uuid.New().String()
-	newAccess, err := h.JWT.SignAccess(claims.UserID, uuid.New().String())
+	newAccess, err := h.JWT.SignAccess(claims.UserID, claims.Role, uuid.New().String())
 	if err != nil {
 		c.Status(http.StatusInternalServerError)
 		c.Error(err)
 		return
 	}
-	newRefresh, err := h.JWT.SignRefresh(claims.UserID, newJTI)
+	newRefresh, err := h.JWT.SignRefresh(claims.UserID, claims.Role, newJTI)
 	if err != nil {
 		c.Status(http.StatusInternalServerError)
 		c.Error(err)

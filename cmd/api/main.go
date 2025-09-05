@@ -150,6 +150,19 @@ func main() {
 				"email": u.Email,
 			})
 		})
+
+		// Admin-only sample
+		v1.GET("/admin/ping",
+			auth.RequireAuth(jwtMgr),
+			auth.RequireRole("admin"),
+			func(c *gin.Context) {
+				c.JSON(http.StatusOK, gin.H{
+					"ok":   true,
+					"role": c.GetString("role"),
+				})
+			},
+		)
+
 	}
 
 	addr := ":" + cfg.Port
