@@ -1,6 +1,7 @@
 package ratelimit
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
@@ -15,29 +16,32 @@ func Middleware(store *Store, keyFn func(*gin.Context) string, rps rate.Limit, b
 		key := keyFn(c)
 		lim := store.Get(key, rps, burst)
 
-		// Reserve untuk dapatkan retry-after tanpa konsumsi token
-		res := lim.Reserve()
+		// ✅ konsumsi 1 token kalau boleh sekarang
+		if lim.Allow() {
+			c.Next()
+			return
+		}
+
+		// ❌ tidak boleh sekarang → hitung delay berikutnya tanpa mengkonsumsi token
+		res := lim.ReserveN(time.Now(), 1)
 		if !res.OK() {
 			c.Header("Retry-After", "1")
 			c.Status(http.StatusTooManyRequests)
-			_ = c.Error(http.ErrHandlerTimeout) // biar error envelope jalan
+			_ = c.Error(errors.New("rate limit exceeded"))
 			c.Abort()
 			return
 		}
-		delay := res.Delay()
-		res.CancelAt(time.Now()) // jangan konsumsi token
+		delay := res.DelayFrom(time.Now())
+		res.CancelAt(time.Now()) // jangan konsumsi—kita hanya mau tau delay
 
-		// If must wait, tolak (strict)
-		if delay > 0 {
-			// approx header
-			c.Header("Retry-After", formatRetryAfter(delay))
-			c.Status(http.StatusTooManyRequests)
-			_ = c.Error(http.ErrHandlerTimeout)
-			c.Abort()
-			return
+		sec := int(delay / time.Second)
+		if sec < 1 {
+			sec = 1
 		}
-
-		c.Next()
+		c.Header("Retry-After", itoa(sec))
+		c.Status(http.StatusTooManyRequests)
+		_ = c.Error(errors.New("rate limit exceeded"))
+		c.Abort()
 	}
 }
 

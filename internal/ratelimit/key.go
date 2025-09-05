@@ -1,6 +1,9 @@
 package ratelimit
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
 	"net"
 	"strings"
 
@@ -25,14 +28,24 @@ func KeyPerIP(c *gin.Context) string {
 	return "ip:" + clientIP(c) + ":path:" + c.FullPath()
 }
 
-// KeyLogin — gabung IP + email (kalau ada di payload) untuk limiter login
+// KeyLogin — gabung IP + email (non-destructive bind, body tetap bisa dipakai handler)
 func KeyLogin(c *gin.Context) string {
-	type body struct {
-		Email string `json:"email"`
+	var email string
+
+	if c.Request.Body != nil {
+		// 1) salin body mentah
+		raw, _ := io.ReadAll(c.Request.Body)
+		// 2) KEMBALIKAN body supaya handler masih bisa baca
+		c.Request.Body = io.NopCloser(bytes.NewBuffer(raw))
+
+		// 3) parse minimal field email (abaikan error)
+		var b struct {
+			Email string `json:"email"`
+		}
+		_ = json.Unmarshal(raw, &b)
+		email = b.Email
 	}
-	var b body
-	_ = c.ShouldBindJSON(&b) // ignore error; hanya bantu key
-	// reset raw body tidak dibutuhkan karena ShouldBindJSON di login akan jalan lagi (gin cached)
-	email := strings.ToLower(strings.TrimSpace(b.Email))
+
+	email = strings.ToLower(strings.TrimSpace(email))
 	return "login:" + clientIP(c) + ":" + email
 }
