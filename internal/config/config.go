@@ -10,6 +10,10 @@ type Config struct {
 	Env   string
 	DBDSN string
 
+	RedisAddr     string
+	RedisPassword string
+	RedisDB       int
+
 	// Logging
 	LogFilePath   string
 	LogMaxSizeMB  int
@@ -26,6 +30,10 @@ func FromEnv() Config {
 		LogMaxSizeMB:  getEnvInt("LOG_MAX_SIZE", 10),
 		LogMaxBackups: getEnvInt("LOG_MAX_BACKUPS", 5),
 		LogMaxAgeDays: getEnvInt("LOG_MAX_AGE", 30),
+
+		RedisAddr:     getEnv("REDIS_ADDR", "127.0.0.1:6379"),
+		RedisPassword: getEnv("REDIS_PASSWORD", ""),
+		RedisDB:       getEnvInt("REDIS_DB", 0),
 	}
 }
 
