@@ -54,8 +54,8 @@ func main() {
 	})
 	defer logger.L.Sync()
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	slog.SetDefault(logger)
+	appLogger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(appLogger)
 
 	// === DB (GORM: Postgres atau SQLite) ===
 	dsn := cfg.DBDSN
@@ -95,8 +95,6 @@ func main() {
 		_ = db.Exec("PRAGMA busy_timeout = 5000;").Error
 	}
 
-	// === migrate (aman untuk dev) ===
-	// === migrate (DEV only via toggle) ===
 	// === migrate (DEV only) ===
 	if getEnv("AUTO_MIGRATE", "false") == "true" {
 		if dialect == "sqlite" {
@@ -118,18 +116,29 @@ func main() {
 		RefreshTTL: mustParseDur(getEnv("JWT_REFRESH_TTL", "168h")),
 	}
 
+	// === CP12: Redis (client + wrap users store dengan cache) ===
+	// Pastikan kamu sudah extend config: RedisAddr, RedisPassword, RedisDB
+	var usersRepo users.Repo = userStore
+	{
+		redisCli := cache.NewRedis(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB)
+		if err := redisCli.Ping(context.Background()); err != nil {
+			slog.Warn("redis.ping.failed", "err", err, "addr", cfg.RedisAddr)
+			// fallback: tetap pakai DB langsung (usersRepo = userStore)
+		} else {
+			slog.Info("redis.connected", "addr", cfg.RedisAddr, "db", cfg.RedisDB)
+			usersRepo = users.NewCachedStore(userStore, redisCli.C, 5*time.Minute)
+		}
+	}
+
 	// === HTTP server ===
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
 
+	// CP11 middlewares
 	r.Use(httpx.RequestID())
 	r.Use(httpx.AccessLog())
-
 	r.Use(httpx.Metrics())
-
-	// Jangan pakai gin.Recovery(); kita pakai RecoveryJSON agar output error selalu JSON
-	// r.Use(gin.Logger()) // opsional; kalau aktif bisa dobel dengan RequestLogger
 
 	// timeout context duluan
 	r.Use(timeoutMiddleware(60 * time.Second))
@@ -142,7 +151,7 @@ func main() {
 		middleware.RecoveryJSON(),
 	)
 
-	// --- Cache store (in-memory) ---
+	// --- Cache store (in-memory) untuk /v1/users/me (tetap) ---
 	cstore := cache.NewMemory(5 * time.Minute)
 
 	// --- Rate limiting ---
@@ -162,9 +171,10 @@ func main() {
 	r.GET("/openapi.yaml", gin.WrapF(docs.OpenAPISpec))
 	r.GET("/docs", gin.WrapF(docs.Redoc))
 
-	// users (pakai handler kamu)
-	users.RegisterRoutes(r, users.NewHandler(userStore))
+	// === CP12: users routes pakai handler yang menerima Repo (bisa cached store) ===
+	users.RegisterRoutes(r, users.NewHandler(usersRepo))
 
+	// === Auth routes (tetap pakai store langsung; caching tidak wajib untuk auth) ===
 	authH := auth.Handler{Users: userStore, Tokens: tokenStore, JWT: jwtMgr}
 	v1 := r.Group("/v1")
 	{
@@ -248,9 +258,9 @@ func main() {
 				})
 			},
 		)
-
 	}
 
+	// metrics endpoint
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	addr := ":" + cfg.Port
@@ -265,9 +275,9 @@ func main() {
 
 	// start async
 	go func() {
-		logger.Info("server.starting", "addr", addr)
+		appLogger.Info("server.starting", "addr", addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Error("server.error", "err", err)
+			appLogger.Error("server.error", "err", err)
 		}
 	}()
 
@@ -280,7 +290,7 @@ func main() {
 	defer cancel()
 	_ = srv.Shutdown(ctx)
 	cstore.Close()
-	logger.Info("server.stopped")
+	appLogger.Info("server.stopped")
 }
 
 // timeoutMiddleware: tambah context timeout ke setiap request
