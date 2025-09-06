@@ -2,6 +2,7 @@ package ratelimit
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -72,11 +73,45 @@ func (l *RedisLimiter) Allow(ctx context.Context, key string) (bool, float64, er
 	res, err := lua.Run(ctx, l.rdb, []string{key},
 		now, l.rps, l.burst, int(l.ttl.Seconds())).Result()
 	if err != nil {
-		return true, 0, err // fail-open
+		// fail-open kalau Redis/Lua error
+		return true, 0, err
 	}
-	arr := res.([]interface{})
-	allowed := arr[0].(int64) == 1
-	remain := arr[1].(float64)
+
+	arr, ok := res.([]interface{})
+	if !ok || len(arr) < 2 {
+		// format tak terduga -> fail-open
+		return true, 0, nil
+	}
+
+	// arr[0] = allowed (1/0), bisa int64 atau string
+	allowed := false
+	switch v := arr[0].(type) {
+	case int64:
+		allowed = v == 1
+	case float64:
+		allowed = int64(v) == 1
+	case string:
+		allowed = v == "1"
+	default:
+		// unknown -> assume allowed (fail-open)
+		allowed = true
+	}
+
+	// arr[1] = tokens sisa, bisa int64 atau float64 atau string
+	var remain float64
+	switch v := arr[1].(type) {
+	case float64:
+		remain = v
+	case int64:
+		remain = float64(v)
+	case string:
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			remain = f
+		}
+	default:
+		remain = 0
+	}
+
 	return allowed, remain, nil
 }
 
@@ -84,7 +119,8 @@ func (l *RedisLimiter) Allow(ctx context.Context, key string) (bool, float64, er
 func MiddlewareRedis(l *RedisLimiter, keyFn func(*gin.Context) string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// lewati /metrics biar Prometheus gak kena limit
-		if c.FullPath() == "/metrics" {
+		switch c.FullPath() {
+		case "/metrics", "/health":
 			c.Next()
 			return
 		}
