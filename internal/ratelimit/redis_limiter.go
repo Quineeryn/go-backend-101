@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/Quineeryn/go-backend-101/internal/httpx"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 )
@@ -132,6 +133,8 @@ func MiddlewareRedis(l *RedisLimiter, keyFn func(*gin.Context) string) gin.Handl
 			return
 		}
 		if !ok {
+
+			httpx.RateLimitExceeded.WithLabelValues(c.FullPath()).Inc()
 			c.Header("Retry-After", "1")
 			c.JSON(429, gin.H{
 				"code":    429,
