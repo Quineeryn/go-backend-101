@@ -1,6 +1,7 @@
 package users
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -10,11 +11,20 @@ import (
 	httpx "github.com/Quineeryn/go-backend-101/internal/httpx"
 )
 
-type Handler struct {
-	store *Store
+// Repo diimplement oleh Store biasa dan CachedStore.
+type Repo interface {
+	Create(ctx context.Context, u User) (User, error)
+	List(ctx context.Context) ([]User, error)
+	Get(ctx context.Context, id string) (User, error)
+	Update(ctx context.Context, id string, data User) (User, error)
+	Delete(ctx context.Context, id string) error
 }
 
-func NewHandler(s *Store) *Handler { return &Handler{store: s} }
+type Handler struct {
+	store Repo
+}
+
+func NewHandler(s Repo) *Handler { return &Handler{store: s} }
 
 type errorResponse struct {
 	Code    int    `json:"code"`
@@ -37,10 +47,10 @@ func writeError(c *gin.Context, status int, msg, details string) {
 // POST /v1/users
 func (h *Handler) Create(c *gin.Context) {
 	uid := httpx.CurrentUserID(c)
-	action := "USER_CREATE"
+	action := httpx.ActionUserCreate
 	success := false
 	msg := ""
-	resource := "" // nanti diisi user.ID saat berhasil
+	resource := ""
 
 	defer func() {
 		httpx.Audit(c, httpx.AuditEvent{
@@ -82,30 +92,16 @@ func (h *Handler) Create(c *gin.Context) {
 		return
 	}
 
-	// sukses
 	success = true
 	msg = "ok"
-	resource = created.ID // pakai ID (hindari PII)
+	resource = created.ID
 	c.JSON(http.StatusCreated, toResponse(created))
 }
 
 // GET /v1/users
 func (h *Handler) List(c *gin.Context) {
-	// NOTE: biasanya cukup access log. Kalau mau audit read ops, kamu bisa aktifkan:
-	// uid := httpx.CurrentUserID(c)
-	// action := "USER_LIST"
-	// success := false
-	// msg := ""
-	// resource := "users:list"
-	// defer func() {
-	// 	httpx.Audit(c, httpx.AuditEvent{
-	// 		UserID: uid, Action: action, Resource: resource, Success: success, Message: msg,
-	// 	})
-	// }()
-
 	usersList, err := h.store.List(c.Request.Context())
 	if err != nil {
-		// msg = "failed to list users"; success tetap false kalau pakai audit
 		writeError(c, http.StatusInternalServerError, "failed to list users", err.Error())
 		return
 	}
@@ -113,15 +109,14 @@ func (h *Handler) List(c *gin.Context) {
 	for _, u := range usersList {
 		out = append(out, toResponse(u))
 	}
-	// success = true; msg = "ok" (kalau pakai audit)
 	c.JSON(http.StatusOK, out)
 }
 
 // GET /v1/users/:id
 func (h *Handler) Get(c *gin.Context) {
-	// Audit read ini opsional—aktifkan kalau aksesnya sensitif (mis. admin lihat profil orang lain)
+	// Audit read ini opsional; aktifkan karena biasanya akses by-id dianggap penting.
 	uid := httpx.CurrentUserID(c)
-	action := "USER_VIEW"
+	action := httpx.ActionUserView
 	success := false
 	msg := ""
 	id := c.Param("id")
@@ -157,7 +152,7 @@ func (h *Handler) Get(c *gin.Context) {
 // PUT /v1/users/:id
 func (h *Handler) Update(c *gin.Context) {
 	uid := httpx.CurrentUserID(c)
-	action := "USER_UPDATE"
+	action := httpx.ActionUserUpdate
 	success := false
 	msg := ""
 	id := c.Param("id")
@@ -207,14 +202,13 @@ func (h *Handler) Update(c *gin.Context) {
 
 	success = true
 	msg = "ok"
-	// resource sudah id (tetap)
 	c.JSON(http.StatusOK, toResponse(updated))
 }
 
 // DELETE /v1/users/:id
 func (h *Handler) Delete(c *gin.Context) {
 	uid := httpx.CurrentUserID(c)
-	action := "USER_DELETE"
+	action := httpx.ActionUserDelete
 	success := false
 	msg := ""
 	id := c.Param("id")

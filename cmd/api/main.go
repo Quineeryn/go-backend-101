@@ -15,10 +15,8 @@ import (
 	"syscall"
 	"time"
 
-	// <--- tambah
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
-	"golang.org/x/time/rate"
 	gormpg "gorm.io/driver/postgres"
 	gormsqlite "gorm.io/driver/sqlite"
 
@@ -42,11 +40,10 @@ func main() {
 	_ = godotenv.Load()
 
 	// === config & logger ===
-	cfg := config.FromEnv() // PORT, DBDSN, dll
+	cfg := config.FromEnv()
 
-	// setelah load config aplikasi kamu
 	_ = logger.Init(logger.Config{
-		Env:        cfg.Env, // ambil dari config kamu, default "dev"
+		Env:        cfg.Env,
 		FilePath:   cfg.LogFilePath,
 		MaxSizeMB:  cfg.LogMaxSizeMB,
 		MaxBackups: cfg.LogMaxBackups,
@@ -54,8 +51,8 @@ func main() {
 	})
 	defer logger.L.Sync()
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	slog.SetDefault(logger)
+	appLogger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(appLogger)
 
 	// === DB (GORM: Postgres atau SQLite) ===
 	dsn := cfg.DBDSN
@@ -76,7 +73,6 @@ func main() {
 			slog.Error("db.open.failed", "dialect", "postgres", "err", err)
 			os.Exit(1)
 		}
-		// (opsional) pool tuning
 		sqlDB, _ := db.DB()
 		sqlDB.SetMaxOpenConns(30)
 		sqlDB.SetMaxIdleConns(10)
@@ -89,14 +85,11 @@ func main() {
 			slog.Error("db.open.failed", "dialect", "sqlite", "err", err)
 			os.Exit(1)
 		}
-		// PRAGMA khusus SQLite
 		_ = db.Exec("PRAGMA foreign_keys = ON;").Error
 		_ = db.Exec("PRAGMA journal_mode = WAL;").Error
 		_ = db.Exec("PRAGMA busy_timeout = 5000;").Error
 	}
 
-	// === migrate (aman untuk dev) ===
-	// === migrate (DEV only via toggle) ===
 	// === migrate (DEV only) ===
 	if getEnv("AUTO_MIGRATE", "false") == "true" {
 		if dialect == "sqlite" {
@@ -118,18 +111,29 @@ func main() {
 		RefreshTTL: mustParseDur(getEnv("JWT_REFRESH_TTL", "168h")),
 	}
 
+	// === CP12: Redis client (global) ===
+	redisCli := cache.NewRedis(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB)
+	if err := redisCli.Ping(context.Background()); err != nil {
+		slog.Warn("redis.ping.failed", "err", err, "addr", cfg.RedisAddr)
+	} else {
+		slog.Info("redis.connected", "addr", cfg.RedisAddr, "db", cfg.RedisDB)
+	}
+
+	// === CP12: users repo dibungkus cache-aside (fallback ke DB-only jika Redis bermasalah) ===
+	var usersRepo users.Repo = userStore
+	if err := redisCli.Ping(context.Background()); err == nil {
+		usersRepo = users.NewCachedStore(userStore, redisCli.C, mustParseDur(getEnv("USERS_CACHE_TTL", "5m")))
+	}
+
 	// === HTTP server ===
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
 
+	// CP11 middlewares
 	r.Use(httpx.RequestID())
 	r.Use(httpx.AccessLog())
-
 	r.Use(httpx.Metrics())
-
-	// Jangan pakai gin.Recovery(); kita pakai RecoveryJSON agar output error selalu JSON
-	// r.Use(gin.Logger()) // opsional; kalau aktif bisa dobel dengan RequestLogger
 
 	// timeout context duluan
 	r.Use(timeoutMiddleware(60 * time.Second))
@@ -142,16 +146,20 @@ func main() {
 		middleware.RecoveryJSON(),
 	)
 
-	// --- Cache store (in-memory) ---
+	// In-memory cache kecil untuk /v1/users/me
 	cstore := cache.NewMemory(5 * time.Minute)
 
-	// --- Rate limiting ---
-	// store in-memory untuk token bucket; GC tiap 10 menit
-	rlStore := ratelimit.NewStore(10 * time.Minute)
-	// limiter default per IP per route
-	defaultRPS := rate.Limit(mustParseFloat(getEnv("RATE_LIMIT_DEFAULT_RPS", "2")))
-	defaultBurst := mustParseInt(getEnv("RATE_LIMIT_DEFAULT_BURST", "10"))
-	r.Use(ratelimit.Middleware(rlStore, ratelimit.KeyPerIP, defaultRPS, defaultBurst))
+	// === CP13: Distributed Rate Limiting (Redis) ===
+	// default per-IP-per-route
+	{
+		rlDefault := ratelimit.NewRedisLimiter(
+			redisCli.C,
+			mustParseFloat(getEnv("RATE_LIMIT_DEFAULT_RPS", "2")),
+			mustParseInt(getEnv("RATE_LIMIT_DEFAULT_BURST", "10")),
+			60*time.Second,
+		)
+		r.Use(ratelimit.MiddlewareRedis(rlDefault, ratelimit.KeyPerIPRoute))
+	}
 
 	// health
 	r.GET("/health", func(c *gin.Context) {
@@ -162,19 +170,23 @@ func main() {
 	r.GET("/openapi.yaml", gin.WrapF(docs.OpenAPISpec))
 	r.GET("/docs", gin.WrapF(docs.Redoc))
 
-	// users (pakai handler kamu)
-	users.RegisterRoutes(r, users.NewHandler(userStore))
+	// users routes (handler menerima Repo: store atau cached store)
+	users.RegisterRoutes(r, users.NewHandler(usersRepo))
 
+	// auth routes (rate limit login lebih ketat)
 	authH := auth.Handler{Users: userStore, Tokens: tokenStore, JWT: jwtMgr}
 	v1 := r.Group("/v1")
 	{
 		v1.POST("/auth/register", authH.Register)
 
-		// limiter khusus login: per IP + email (lebih ketat)
-		authRPS := rate.Limit(mustParseFloat(getEnv("RATE_LIMIT_AUTH_RPS", "0.2"))) // ~12/min
-		authBurst := mustParseInt(getEnv("RATE_LIMIT_AUTH_BURST", "5"))
+		rlLogin := ratelimit.NewRedisLimiter(
+			redisCli.C,
+			mustParseFloat(getEnv("RATE_LIMIT_AUTH_RPS", "0.2")), // ~12/min
+			mustParseInt(getEnv("RATE_LIMIT_AUTH_BURST", "5")),
+			60*time.Second,
+		)
 		v1.POST("/auth/login",
-			ratelimit.Middleware(rlStore, ratelimit.KeyLogin, authRPS, authBurst),
+			ratelimit.MiddlewareRedis(rlLogin, ratelimit.KeyLogin),
 			authH.Login,
 		)
 
@@ -187,7 +199,6 @@ func main() {
 			key := "me:" + uid
 
 			if b, ok := cstore.Get(key); ok {
-				// ETag check dari cache
 				etag := cache.WeakETag(b)
 				if inm := c.GetHeader("If-None-Match"); inm != "" && inm == etag {
 					c.Header("ETag", etag)
@@ -201,14 +212,12 @@ func main() {
 				return
 			}
 
-			// MISS -> ambil dari DB
 			u, err := userStore.FindByID(c, uid)
 			if err != nil {
 				c.Status(http.StatusNotFound)
 				c.Error(err)
 				return
 			}
-			// build body JSON manual (agar bisa cache byte result)
 			type mePayload struct {
 				ID    string `json:"id"`
 				Name  string `json:"name"`
@@ -222,7 +231,6 @@ func main() {
 				return
 			}
 
-			// simpan ke cache (TTL 30s)
 			cstore.Set(key, body, 30*time.Second)
 
 			etag := cache.WeakETag(body)
@@ -248,9 +256,9 @@ func main() {
 				})
 			},
 		)
-
 	}
 
+	// metrics endpoint
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	addr := ":" + cfg.Port
@@ -265,9 +273,9 @@ func main() {
 
 	// start async
 	go func() {
-		logger.Info("server.starting", "addr", addr)
+		appLogger.Info("server.starting", "addr", addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Error("server.error", "err", err)
+			appLogger.Error("server.error", "err", err)
 		}
 	}()
 
@@ -280,7 +288,7 @@ func main() {
 	defer cancel()
 	_ = srv.Shutdown(ctx)
 	cstore.Close()
-	logger.Info("server.stopped")
+	appLogger.Info("server.stopped")
 }
 
 // timeoutMiddleware: tambah context timeout ke setiap request
@@ -309,7 +317,6 @@ func mustParseDur(s string) time.Duration {
 	return d
 }
 
-// buang prefix "file:" (Windows suka rewel dengan URI)
 func stripSQLiteURI(dsn string) string {
 	if strings.HasPrefix(dsn, "file:") {
 		return strings.TrimPrefix(dsn, "file:")
@@ -317,7 +324,6 @@ func stripSQLiteURI(dsn string) string {
 	return dsn
 }
 
-// pastikan folder untuk file DB ada
 func ensureDirFor(dsn string) {
 	p := stripSQLiteURI(dsn)
 	if i := strings.IndexByte(p, '?'); i >= 0 {
@@ -332,7 +338,6 @@ func ensureDirFor(dsn string) {
 	}
 }
 
-// Pastikan kolom/tabel penting sudah ada saat AUTO_MIGRATE=false
 func schemaGuard(db *gorm.DB) error {
 	m := db.Migrator()
 	type pair struct {
@@ -343,7 +348,6 @@ func schemaGuard(db *gorm.DB) error {
 		{&users.User{}, "password_hash"},
 		{&users.User{}, "role"},
 	}
-	// tabel refresh_tokens minimal harus ada
 	if !m.HasTable(&auth.RefreshToken{}) {
 		return fmt.Errorf("missing table refresh_tokens")
 	}
