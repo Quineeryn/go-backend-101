@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/Quineeryn/go-backend-101/internal/apperr"
 	httpx "github.com/Quineeryn/go-backend-101/internal/httpx"
 )
 
@@ -70,8 +71,7 @@ func (h *Handler) Create(c *gin.Context) {
 	}
 	req.Normalize()
 	if req.Name == "" || req.Email == "" {
-		msg = "name and email are required"
-		writeError(c, http.StatusBadRequest, msg, "")
+		httpx.AbortError(c, "users.create", apperr.E(apperr.Validation, "name and email are required", nil))
 		return
 	}
 
@@ -83,8 +83,7 @@ func (h *Handler) Create(c *gin.Context) {
 	created, err := h.store.Create(c.Request.Context(), u)
 	if err != nil {
 		if err == ErrDuplicate {
-			msg = "duplicate email"
-			writeError(c, http.StatusConflict, msg, "email already exists")
+			httpx.AbortError(c, "users.create", apperr.E(apperr.Conflict, "email already exists", nil))
 			return
 		}
 		msg = "failed to create user"
@@ -135,8 +134,7 @@ func (h *Handler) Get(c *gin.Context) {
 	u, err := h.store.Get(c.Request.Context(), id)
 	if err != nil {
 		if err == ErrNotFound {
-			msg = "user not found"
-			writeError(c, http.StatusNotFound, msg, "")
+			httpx.AbortError(c, "users.get", apperr.E(apperr.NotFound, "user not found", nil))
 			return
 		}
 		msg = "failed to get user"
