@@ -82,9 +82,7 @@ func (s *Store) Update(ctx context.Context, id string, data User) (User, error) 
 	}
 
 	data.Name = strings.TrimSpace(data.Name)
-	data.Email = strings.TrimSpace(data.Email)
-	data.Name = strings.TrimSpace(u.Name)
-	data.Email = strings.ToLower(strings.TrimSpace(u.Email))
+	data.Email = strings.ToLower(strings.TrimSpace(data.Email))
 
 	if data.Name == "" || data.Email == "" {
 		return User{}, errors.New("name and email are required")

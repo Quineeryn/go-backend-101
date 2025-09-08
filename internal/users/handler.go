@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/Quineeryn/go-backend-101/internal/apperr"
 	httpx "github.com/Quineeryn/go-backend-101/internal/httpx"
 )
 
@@ -26,6 +27,8 @@ type Handler struct {
 
 func NewHandler(s Repo) *Handler { return &Handler{store: s} }
 
+// (Opsional) Masih dipertahankan kalau suatu saat mau dipakai untuk non-AppError path.
+// Tapi pada versi ini kita tidak memanggilnya lagi.
 type errorResponse struct {
 	Code    int    `json:"code"`
 	Error   string `json:"error"`
@@ -63,15 +66,13 @@ func (h *Handler) Create(c *gin.Context) {
 	}()
 
 	var req CreateUserRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		msg = "invalid request body"
-		writeError(c, http.StatusBadRequest, msg, err.Error())
+	if err := httpx.DecodeJSON(c.Request, &req); err != nil {
+		httpx.AbortError(c, "users.create", apperr.E(apperr.Validation, "invalid request body", err))
 		return
 	}
 	req.Normalize()
 	if req.Name == "" || req.Email == "" {
-		msg = "name and email are required"
-		writeError(c, http.StatusBadRequest, msg, "")
+		httpx.AbortError(c, "users.create", apperr.E(apperr.Validation, "name and email are required", nil))
 		return
 	}
 
@@ -83,12 +84,10 @@ func (h *Handler) Create(c *gin.Context) {
 	created, err := h.store.Create(c.Request.Context(), u)
 	if err != nil {
 		if err == ErrDuplicate {
-			msg = "duplicate email"
-			writeError(c, http.StatusConflict, msg, "email already exists")
+			httpx.AbortError(c, "users.create", apperr.E(apperr.Conflict, "email already exists", err))
 			return
 		}
-		msg = "failed to create user"
-		writeError(c, http.StatusInternalServerError, msg, err.Error())
+		httpx.AbortError(c, "users.create", apperr.E(apperr.Internal, "failed to create user", err))
 		return
 	}
 
@@ -102,7 +101,7 @@ func (h *Handler) Create(c *gin.Context) {
 func (h *Handler) List(c *gin.Context) {
 	usersList, err := h.store.List(c.Request.Context())
 	if err != nil {
-		writeError(c, http.StatusInternalServerError, "failed to list users", err.Error())
+		httpx.AbortError(c, "users.list", apperr.E(apperr.Internal, "failed to list users", err))
 		return
 	}
 	out := make([]UserResponse, 0, len(usersList))
@@ -114,7 +113,6 @@ func (h *Handler) List(c *gin.Context) {
 
 // GET /v1/users/:id
 func (h *Handler) Get(c *gin.Context) {
-	// Audit read ini opsional; aktifkan karena biasanya akses by-id dianggap penting.
 	uid := httpx.CurrentUserID(c)
 	action := httpx.ActionUserView
 	success := false
@@ -135,12 +133,10 @@ func (h *Handler) Get(c *gin.Context) {
 	u, err := h.store.Get(c.Request.Context(), id)
 	if err != nil {
 		if err == ErrNotFound {
-			msg = "user not found"
-			writeError(c, http.StatusNotFound, msg, "")
+			httpx.AbortError(c, "users.get", apperr.E(apperr.NotFound, "user not found", err))
 			return
 		}
-		msg = "failed to get user"
-		writeError(c, http.StatusInternalServerError, msg, err.Error())
+		httpx.AbortError(c, "users.get", apperr.E(apperr.Internal, "failed to get user", err))
 		return
 	}
 
@@ -169,15 +165,13 @@ func (h *Handler) Update(c *gin.Context) {
 	}()
 
 	var req UpdateUserRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		msg = "invalid request body"
-		writeError(c, http.StatusBadRequest, msg, err.Error())
+	if err := httpx.DecodeJSON(c.Request, &req); err != nil {
+		httpx.AbortError(c, "users.update", apperr.E(apperr.Validation, "invalid request body", err))
 		return
 	}
 	req.Normalize()
 	if req.Name == "" || req.Email == "" {
-		msg = "name and email are required"
-		writeError(c, http.StatusBadRequest, msg, "")
+		httpx.AbortError(c, "users.update", apperr.E(apperr.Validation, "name and email are required", nil))
 		return
 	}
 
@@ -186,16 +180,13 @@ func (h *Handler) Update(c *gin.Context) {
 	if err != nil {
 		switch err {
 		case ErrNotFound:
-			msg = "user not found"
-			writeError(c, http.StatusNotFound, msg, "")
+			httpx.AbortError(c, "users.update", apperr.E(apperr.NotFound, "user not found", err))
 			return
 		case ErrDuplicate:
-			msg = "duplicate email"
-			writeError(c, http.StatusConflict, msg, "email already exists")
+			httpx.AbortError(c, "users.update", apperr.E(apperr.Conflict, "email already exists", err))
 			return
 		default:
-			msg = "failed to update user"
-			writeError(c, http.StatusInternalServerError, msg, err.Error())
+			httpx.AbortError(c, "users.update", apperr.E(apperr.Internal, "failed to update user", err))
 			return
 		}
 	}
@@ -226,12 +217,10 @@ func (h *Handler) Delete(c *gin.Context) {
 
 	if err := h.store.Delete(c.Request.Context(), id); err != nil {
 		if err == ErrNotFound {
-			msg = "user not found"
-			writeError(c, http.StatusNotFound, msg, "")
+			httpx.AbortError(c, "users.delete", apperr.E(apperr.NotFound, "user not found", err))
 			return
 		}
-		msg = "failed to delete user"
-		writeError(c, http.StatusInternalServerError, msg, err.Error())
+		httpx.AbortError(c, "users.delete", apperr.E(apperr.Internal, "failed to delete user", err))
 		return
 	}
 

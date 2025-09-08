@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop, feature/** ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test-users:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+          check-latest: true
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Download deps
+        run: go mod download
+
+      - name: Run users tests with coverage
+        env:
+          CGO_ENABLED: 0
+        run: |
+          go test ./internal/users -coverprofile=cover.out -covermode=atomic -v
+
+      - name: Show coverage
+        run: go tool cover -func=cover.out
+
+      - name: Enforce coverage threshold (>= 70%)
+        run: |
+          pct=$(go tool cover -func=cover.out | awk '/total:/ {print substr($3, 1, length($3)-1)}')
+          echo "Coverage: $pct%"
+          awk -v p="$pct" 'BEGIN{ if (p+0 < 70) { print "Coverage below threshold: " p "%"; exit 1 } }'
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-out
+          path: cover.out
