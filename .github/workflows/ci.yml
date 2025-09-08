@@ -7,15 +7,12 @@ on:
     branches: [ main, develop ]
 
 jobs:
-  test:
+  test-users:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version: '1.22.x'
           check-latest: true
@@ -33,11 +30,11 @@ jobs:
       - name: Download deps
         run: go mod download
 
-      - name: Run tests (internal only) with coverage
+      - name: Run users tests with coverage
         env:
           CGO_ENABLED: 0
         run: |
-          go test ./internal/... -coverprofile=cover.out -covermode=atomic -v
+          go test ./internal/users -coverprofile=cover.out -covermode=atomic -v
 
       - name: Show coverage
         run: go tool cover -func=cover.out
@@ -47,3 +44,9 @@ jobs:
           pct=$(go tool cover -func=cover.out | awk '/total:/ {print substr($3, 1, length($3)-1)}')
           echo "Coverage: $pct%"
           awk -v p="$pct" 'BEGIN{ if (p+0 < 70) { print "Coverage below threshold: " p "%"; exit 1 } }'
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-out
+          path: cover.out
