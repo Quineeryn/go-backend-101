@@ -33,21 +33,17 @@ jobs:
       - name: Download deps
         run: go mod download
 
-      # Penting: internal/... agar cmd/* tidak ikut (dan kita pakai glebarez/sqlite)
-      - name: Run tests with coverage
+      - name: Run tests (internal only) with coverage
         env:
           CGO_ENABLED: 0
         run: |
           go test ./internal/... -coverprofile=cover.out -covermode=atomic -v
+
+      - name: Show coverage
+        run: go tool cover -func=cover.out
 
       - name: Enforce coverage threshold (>= 70%)
         run: |
           pct=$(go tool cover -func=cover.out | awk '/total:/ {print substr($3, 1, length($3)-1)}')
           echo "Coverage: $pct%"
           awk -v p="$pct" 'BEGIN{ if (p+0 < 70) { print "Coverage below threshold: " p "%"; exit 1 } }'
-
-      - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-out
-          path: cover.out
