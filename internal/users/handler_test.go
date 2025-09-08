@@ -272,3 +272,61 @@ func TestUsers_List_200_ReturnsArray(t *testing.T) {
 		t.Fatalf("expected JSON array response, got: %s", w.Body.String())
 	}
 }
+
+func TestUsers_Create_400_MalformedJSON(t *testing.T) {
+	r, _ := newHTTP(t)
+	req := httptest.NewRequest(http.MethodPost, "/v1/users", bytes.NewBufferString(`{"name":"Alea","email":}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("want 400 for malformed JSON, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestUsers_Update_404_NotFound(t *testing.T) {
+	r, _ := newHTTP(t)
+	w := doJSON(r, http.MethodPut, "/v1/users/00000000-0000-0000-0000-000000000000", map[string]any{
+		"name":  "X",
+		"email": "x@example.com",
+	})
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("want 404, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestUsers_Delete_404_NotFound(t *testing.T) {
+	r, _ := newHTTP(t)
+	w := doJSON(r, http.MethodDelete, "/v1/users/00000000-0000-0000-0000-000000000000", nil)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("want 404, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestUsers_List_Order_WithMultiple(t *testing.T) {
+	r, _ := newHTTP(t)
+
+	_ = doJSON(r, http.MethodPost, "/v1/users", map[string]any{"name": "A", "email": "a@example.com"})
+	time.Sleep(2 * time.Millisecond)
+	_ = doJSON(r, http.MethodPost, "/v1/users", map[string]any{"name": "B", "email": "b@example.com"})
+	time.Sleep(2 * time.Millisecond)
+	_ = doJSON(r, http.MethodPost, "/v1/users", map[string]any{"name": "C", "email": "c@example.com"})
+
+	w := doJSON(r, http.MethodGet, "/v1/users", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	var arr []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &arr); err != nil {
+		t.Fatalf("unmarshal list: %v body=%s", err, w.Body.String())
+	}
+	if len(arr) != 3 {
+		t.Fatalf("want 3 users, got %d", len(arr))
+	}
+	// Store.List order ASC by created_at => a, b, c
+	if arr[0]["email"] != "a@example.com" || arr[1]["email"] != "b@example.com" || arr[2]["email"] != "c@example.com" {
+		t.Fatalf("wrong order: %v", []any{arr[0]["email"], arr[1]["email"], arr[2]["email"]})
+	}
+}

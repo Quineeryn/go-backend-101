@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"log/slog"
 	"net/http"
 	"os"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	"go.uber.org/zap"
 	gormpg "gorm.io/driver/postgres"
 	gormsqlite "gorm.io/driver/sqlite"
 
@@ -125,10 +127,17 @@ func main() {
 		usersRepo = users.NewCachedStore(userStore, redisCli.C, mustParseDur(getEnv("USERS_CACHE_TTL", "5m")))
 	}
 
+	logger.L, err = zap.NewProduction() // atau zap.NewExample() untuk dev
+	if err != nil {
+		log.Fatalf("failed to init logger: %v", err)
+	}
+	defer logger.L.Sync()
+
 	// === HTTP server ===
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(httpx.ErrorMiddleware())
 
 	// CP11 middlewares
 	r.Use(httpx.RequestID())
