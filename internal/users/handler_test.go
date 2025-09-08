@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -328,5 +330,88 @@ func TestUsers_List_Order_WithMultiple(t *testing.T) {
 	// Store.List order ASC by created_at => a, b, c
 	if arr[0]["email"] != "a@example.com" || arr[1]["email"] != "b@example.com" || arr[2]["email"] != "c@example.com" {
 		t.Fatalf("wrong order: %v", []any{arr[0]["email"], arr[1]["email"], arr[2]["email"]})
+	}
+}
+
+func TestUsers_Create_400_WrongContentType(t *testing.T) {
+	r, _ := newHTTP(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/users", bytes.NewBufferString(`{"name":"A","email":"a@example.com"}`))
+	req.Header.Set("Content-Type", "text/plain") // salah
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestUsers_Update_400_InvalidPayload(t *testing.T) {
+	r, store := newHTTP(t)
+
+	// seed 1 user
+	_ = doJSON(r, http.MethodPost, "/v1/users", map[string]any{
+		"name":  "X",
+		"email": "x@example.com",
+	})
+	u, _ := store.FindByEmail(context.Background(), "x@example.com")
+
+	w := doJSON(r, http.MethodPut, "/v1/users/"+u.ID, map[string]any{
+		"name":  "   ",
+		"email": "   ",
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestUsers_Create_201_Normalizes(t *testing.T) {
+	r, _ := newHTTP(t)
+
+	w := doJSON(r, http.MethodPost, "/v1/users", map[string]any{
+		"name":  "  Alea  ",
+		"email": "  ALEA@EXAMPLE.COM ",
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("want 201, got %d body=%s", w.Code, w.Body.String())
+	}
+	var obj map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &obj)
+	if obj["name"] != "Alea" {
+		t.Fatalf("want name=Alea, got %v", obj["name"])
+	}
+	if obj["email"] != "alea@example.com" {
+		t.Fatalf("want email lowercased, got %v", obj["email"])
+	}
+}
+
+func TestUsers_List_Empty(t *testing.T) {
+	r, _ := newHTTP(t)
+	w := doJSON(r, http.MethodGet, "/v1/users", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", w.Code)
+	}
+	if string(w.Body.Bytes()) != "[]" {
+		t.Fatalf("want empty array, got %s", w.Body.String())
+	}
+}
+
+func TestWriteError(t *testing.T) {
+	// setup recorder & request
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+
+	// panggil writeError
+	writeError(c, http.StatusBadRequest, "bad req", "details here")
+
+	// verifikasi hasil
+	res := w.Result()
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", res.StatusCode)
+	}
+
+	body, _ := io.ReadAll(res.Body)
+	if !strings.Contains(string(body), "bad req") {
+		t.Fatalf("response body missing message, got: %s", string(body))
 	}
 }
