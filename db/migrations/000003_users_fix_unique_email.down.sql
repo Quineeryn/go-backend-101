@@ -1,0 +1,2 @@
+-- Down bisa no-op agar tidak merusak constraint production
+-- ALTER TABLE users DROP CONSTRAINT IF EXISTS users_email_key;

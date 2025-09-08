@@ -1,0 +1,132 @@
+openapi: 3.0.3
+info:
+  title: go-backend-101 API
+  version: "1.0.0"
+  description: |
+    API dasar untuk latihan Minggu 1. Mencakup health check dan CRUD users (in-memory).
+servers:
+  - url: http://localhost:8080
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+  /v1/users:
+    get:
+      summary: List users
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/User" }
+    post:
+      summary: Create user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateUserRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/users/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: Get user by ID
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    put:
+      summary: Update user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateUserRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      summary: Delete user
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+components:
+  schemas:
+    User:
+      type: object
+      properties:
+        id:    { type: string, example: "8f2b2f7e-7e3c-4f01-9c7e-1c7a9d0f2c12" }
+        name:  { type: string, example: "Alea" }
+        email: { type: string, format: email, example: "alea@example.com" }
+      required: [id, name, email]
+    CreateUserRequest:
+      type: object
+      properties:
+        name:  { type: string, example: "Alea" }
+        email: { type: string, format: email, example: "alea@example.com" }
+      required: [name, email]
+    UpdateUserRequest:
+      type: object
+      properties:
+        name:  { type: string, example: "Alea Updated" }
+        email: { type: string, format: email, example: "alea@ex.com" }
+      required: [name, email]
+    Error:
+      type: object
+      properties:
+        error:   { type: string, example: "Bad Request" }
+        message: { type: string, example: "invalid name or email" }
+        code:    { type: integer, example: 400 }
+        time:    { type: string, format: date-time }
+        details: { nullable: true }
+      required: [error, message, code, time]
