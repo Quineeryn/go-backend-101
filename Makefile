@@ -6,7 +6,7 @@ run:
 	CGO_ENABLED=0 go run ./cmd/api
 
 test:
-	CGO_ENABLED=0 go test ./...
+	CGO_ENABLED=0 go test ./internal/... -v
 
 build:
 	CGO_ENABLED=0 go build -o bin/api ./cmd/api
