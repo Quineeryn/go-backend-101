@@ -66,7 +66,7 @@ func (h *Handler) Create(c *gin.Context) {
 	}()
 
 	var req CreateUserRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := httpx.DecodeJSON(c.Request, &req); err != nil {
 		httpx.AbortError(c, "users.create", apperr.E(apperr.Validation, "invalid request body", err))
 		return
 	}
@@ -165,7 +165,7 @@ func (h *Handler) Update(c *gin.Context) {
 	}()
 
 	var req UpdateUserRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := httpx.DecodeJSON(c.Request, &req); err != nil {
 		httpx.AbortError(c, "users.update", apperr.E(apperr.Validation, "invalid request body", err))
 		return
 	}
