@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	"go.uber.org/zap"
 	gormpg "gorm.io/driver/postgres"
@@ -27,6 +28,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/Quineeryn/go-backend-101/cmd/api/grpcclient"
 	"github.com/Quineeryn/go-backend-101/internal/auth"
 	"github.com/Quineeryn/go-backend-101/internal/cache"
 	"github.com/Quineeryn/go-backend-101/internal/config"
@@ -39,6 +41,13 @@ import (
 )
 
 func main() {
+	addr := getenv("USER_SVC_ADDR", "localhost:50051")
+	uc, err := grpcclient.NewUserClient(addr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer uc.Close()
+
 	_ = godotenv.Load()
 
 	// === config & logger ===
@@ -67,7 +76,6 @@ func main() {
 	}
 
 	var db *gorm.DB
-	var err error
 
 	if dialect == "postgres" {
 		db, err = gorm.Open(gormpg.Open(dsn), &gorm.Config{})
@@ -139,6 +147,7 @@ func main() {
 	r.Use(gin.Recovery())
 	r.Use(httpx.ErrorMiddleware())
 
+	r.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 	// CP11 middlewares
 	r.Use(httpx.RequestID())
 	r.Use(httpx.AccessLog())
@@ -154,6 +163,15 @@ func main() {
 		middleware.ErrorEnvelope(),
 		middleware.RecoveryJSON(),
 	)
+
+	r.Use(func(c *gin.Context) {
+		rid := c.GetHeader("X-Request-ID")
+		if rid == "" {
+			rid = uuid.NewString()
+		}
+		c.Writer.Header().Set("X-Request-ID", rid)
+		c.Next()
+	})
 
 	// In-memory cache kecil untuk /v1/users/me
 	cstore := cache.NewMemory(5 * time.Minute)
@@ -270,7 +288,6 @@ func main() {
 	// metrics endpoint
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
-	addr := ":" + cfg.Port
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           r,
@@ -382,4 +399,11 @@ func mustParseInt(s string) int {
 		return 1
 	}
 	return v
+}
+
+func getenv(k, def string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return def
 }
