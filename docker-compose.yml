@@ -6,7 +6,7 @@ services:
       dockerfile: services/user-svc/Dockerfile
     ports: ["50051:50051"]
     healthcheck:
-      test: ["CMD", "bash", "-lc", "exec 3<>/dev/tcp/127.0.0.1/50051 && echo -e '\x00' >&3 || exit 1"]
+      test: ["CMD", "/bin/grpc_health_probe", "-addr=127.0.0.1:50051"]
       interval: 5s
       timeout: 3s
       retries: 10

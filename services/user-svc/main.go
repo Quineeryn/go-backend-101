@@ -25,6 +25,8 @@ func main() {
 
 	hs := health.NewServer()
 	healthpb.RegisterHealthServer(s, hs)
+	hs.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
+	hs.SetServingStatus(userv1.UserService_ServiceDesc.ServiceName, healthpb.HealthCheckResponse_SERVING)
 
 	log.Printf("user-svc gRPC on :50051")
 	if err := s.Serve(lis); err != nil {
