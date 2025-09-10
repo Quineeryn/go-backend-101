@@ -14,7 +14,7 @@ COPY . .
 # Build biner statik
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -buildvcs=false -o /out/user-svc ./services/user-svc
 
-RUN GOBIN=/out go install github.com/grpc-ecosystem/grpc-health-probe/@latest
+RUN GOBIN=/out go install github.com/grpc-ecosystem/grpc-health-probe@latest
 # --- Runner minimal ---
 FROM gcr.io/distroless/base-debian12
 COPY --from=build /out/user-svc /user-svc

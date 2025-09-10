@@ -1,6 +1,9 @@
 package handler
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"net/http"
 
 	"github.com/Quineeryn/go-backend-101/cmd/api/grpcclient"
@@ -12,6 +15,12 @@ type Users struct {
 	UC *grpcclient.UserClient
 }
 
+func weakETag(v any) string {
+	b, _ := json.Marshal(v)
+	sum := sha256.Sum256(b)
+	return `W/"` + hex.EncodeToString(sum[:]) + `"`
+}
+
 func (h *Users) Get(c *gin.Context) {
 	id := c.Param("id")
 	ctx := grpcclient.WithRequestID(c.Request.Context(), c.GetHeader("X-Request-ID"))
@@ -20,6 +29,13 @@ func (h *Users) Get(c *gin.Context) {
 		MapGrpcErr(c, err)
 		return
 	}
+
+	etag := weakETag(res.GetUser())
+	if inm := c.GetHeader("If-None-Match"); inm == etag {
+		c.Status(http.StatusNotModified)
+		return
+	}
+	c.Header("ETag", etag)
 	c.JSON(http.StatusOK, gin.H{"data": res.GetUser()})
 }
 

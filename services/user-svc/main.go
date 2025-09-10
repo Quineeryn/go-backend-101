@@ -3,6 +3,9 @@ package main
 import (
 	"log"
 	"net"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
@@ -27,6 +30,14 @@ func main() {
 	healthpb.RegisterHealthServer(s, hs)
 	hs.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
 	hs.SetServingStatus(userv1.UserService_ServiceDesc.ServiceName, healthpb.HealthCheckResponse_SERVING)
+
+	go func() {
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+		<-sig
+		log.Println("user-svc: shutting down...")
+		s.GracefulStop()
+	}()
 
 	log.Printf("user-svc gRPC on :50051")
 	if err := s.Serve(lis); err != nil {
