@@ -29,6 +29,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/Quineeryn/go-backend-101/cmd/api/grpcclient"
+	gh "github.com/Quineeryn/go-backend-101/cmd/api/handler"
 	"github.com/Quineeryn/go-backend-101/internal/auth"
 	"github.com/Quineeryn/go-backend-101/internal/cache"
 	"github.com/Quineeryn/go-backend-101/internal/config"
@@ -41,8 +42,10 @@ import (
 )
 
 func main() {
-	addr := getenv("USER_SVC_ADDR", "localhost:50051")
-	uc, err := grpcclient.NewUserClient(addr)
+	addr := getEnv("HHTP_ADDR", ":8080")
+	userSvcAddr := getEnv("USER_SVC_ADDR", "user-svc:50051")
+
+	uc, err := grpcclient.NewUserClient(userSvcAddr)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -130,10 +133,10 @@ func main() {
 	}
 
 	// === CP12: users repo dibungkus cache-aside (fallback ke DB-only jika Redis bermasalah) ===
-	var usersRepo users.Repo = userStore
-	if err := redisCli.Ping(context.Background()); err == nil {
-		usersRepo = users.NewCachedStore(userStore, redisCli.C, mustParseDur(getEnv("USERS_CACHE_TTL", "5m")))
-	}
+	// var usersRepo users.Repo = userStore
+	// if err := redisCli.Ping(context.Background()); err == nil {
+	// 	usersRepo = users.NewCachedStore(userStore, redisCli.C, mustParseDur(getEnv("USERS_CACHE_TTL", "5m")))
+	// }
 
 	logger.L, err = zap.NewProduction() // atau zap.NewExample() untuk dev
 	if err != nil {
@@ -198,12 +201,16 @@ func main() {
 	r.GET("/docs", gin.WrapF(docs.Redoc))
 
 	// users routes (handler menerima Repo: store atau cached store)
-	users.RegisterRoutes(r, users.NewHandler(usersRepo))
-
+	gw := &gh.Users{UC: uc}
 	// auth routes (rate limit login lebih ketat)
+
 	authH := auth.Handler{Users: userStore, Tokens: tokenStore, JWT: jwtMgr}
 	v1 := r.Group("/v1")
 	{
+
+		v1.GET("/users", gw.List)
+		v1.GET("/users/:id", gw.Get)
+		v1.POST("/users", gw.Create)
 		v1.POST("/auth/register", authH.Register)
 
 		rlLogin := ratelimit.NewRedisLimiter(
